@@ -94,7 +94,7 @@ jobs:
       - run: npm ci --prefix apps/web
       - run: npm run lint --prefix apps/web
       - name: TypeScript type check
-        run: npx --prefix apps/web tsc --noEmit
+        run: npx --prefix apps/web tsc -p apps/web/tsconfig.json --noEmit
 
   frontend-build:
     name: Frontend — Build
