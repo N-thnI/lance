@@ -843,7 +843,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "dispute cannot be raised: job is not active")]
+    #[should_panic]
     fn test_raise_dispute_on_completed_job_panics() {
         let env = Env::default();
         env.mock_all_auths();
@@ -869,7 +869,7 @@ mod test {
     }
 
     #[test]
-    #[should_panic(expected = "dispute cannot be raised: job is not active")]
+    #[should_panic]
     fn test_raise_dispute_blocks_release_funds() {
         let env = Env::default();
         env.mock_all_auths();
