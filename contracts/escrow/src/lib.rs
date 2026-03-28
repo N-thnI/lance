@@ -1,6 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env};
+use soroban_sdk::{contract, contractimpl, contracttype, token, Address, Env, Vec};
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -23,6 +23,9 @@ pub struct EscrowJob {
     pub milestones: u32,
     pub milestones_released: u32,
     pub status: EscrowStatus,
+    pub created_at: u64,
+    pub expires_at: u64,
+    pub milestones_completed: Vec<bool>,
 }
 
 #[contracttype]
@@ -61,8 +64,21 @@ impl EscrowContract {
         if env.storage().persistent().has(&key) {
             panic!("job already exists");
         }
+        // record timestamps
+        let now: u64 = env.ledger().timestamp();
+        // seed an expiration (30 days) to avoid locking funds indefinitely
+        let expires_at = now + 30 * 24 * 60 * 60;
+
+        // initialize milestones completion vector
+        let mut completed: Vec<bool> = Vec::new(&env);
+        let mut i = 0u32;
+        while i < milestones {
+            completed.push_back(false);
+            i += 1;
+        }
 
         let token_client = token::Client::new(&env, &token_addr);
+        // transfer tokens from client into contract custody (client must authorize)
         token_client.transfer(&client, &env.current_contract_address(), &amount);
 
         let job = EscrowJob {
@@ -74,6 +90,9 @@ impl EscrowContract {
             milestones,
             milestones_released: 0,
             status: EscrowStatus::Active,
+            created_at: now,
+            expires_at,
+            milestones_completed: completed,
         };
         env.storage().persistent().set(&key, &job);
     }
@@ -85,16 +104,28 @@ impl EscrowContract {
         let key = DataKey::Job(job_id);
         let mut job: EscrowJob = env.storage().persistent().get(&key).expect("job not found");
 
-        assert!(job.status == EscrowStatus::Active, "job not active");
-        assert!(caller == job.client, "only client can release");
         assert!(
             job.milestones_released < job.milestones,
             "all milestones already released"
         );
+        assert!(job.status == EscrowStatus::Active, "job not active");
+        assert!(caller == job.client, "only client can release");
+
+        // determine the next milestone index (0-based)
+        let idx = job.milestones_released;
+        // ensure it wasn't already completed (defensive)
+        let already: bool = job
+            .milestones_completed
+            .get(idx)
+            .expect("invalid milestone index");
+        assert!(!already, "milestone already released");
 
         let per_milestone = job.total_amount / (job.milestones as i128);
         job.milestones_released += 1;
         job.released_amount += per_milestone;
+
+        // mark completed
+        job.milestones_completed.set(idx, true);
 
         let token_client = token::Client::new(&env, &job.token);
         token_client.transfer(
@@ -102,6 +133,55 @@ impl EscrowContract {
             &job.freelancer,
             &per_milestone,
         );
+
+        if job.milestones_released == job.milestones {
+            let remainder = job.total_amount - job.released_amount;
+            if remainder > 0 {
+                token_client.transfer(
+                    &env.current_contract_address(),
+                    &job.freelancer,
+                    &remainder,
+                );
+                job.released_amount += remainder;
+            }
+            job.status = EscrowStatus::Completed;
+        }
+
+        env.storage().persistent().set(&key, &job);
+    }
+
+    /// Happy-path release for an explicit milestone index (0-based).
+    /// Only the client may call this to release the funds for a specific milestone.
+    pub fn release_funds(env: Env, job_id: u64, caller: Address, milestone_index: u32) {
+        caller.require_auth();
+
+        let key = DataKey::Job(job_id);
+        let mut job: EscrowJob = env.storage().persistent().get(&key).expect("job not found");
+
+        assert!(job.status == EscrowStatus::Active, "job not active");
+        assert!(caller == job.client, "only client can release");
+        assert!(milestone_index < job.milestones, "invalid milestone index");
+
+        let already: bool = job
+            .milestones_completed
+            .get(milestone_index)
+            .expect("invalid milestone index");
+        assert!(!already, "milestone already released");
+
+        let per_milestone = job.total_amount / (job.milestones as i128);
+
+        // transfer funds for this milestone
+        let token_client = token::Client::new(&env, &job.token);
+        token_client.transfer(
+            &env.current_contract_address(),
+            &job.freelancer,
+            &per_milestone,
+        );
+
+        // update bookkeeping
+        job.milestones_completed.set(milestone_index, true);
+        job.milestones_released += 1;
+        job.released_amount += per_milestone;
 
         if job.milestones_released == job.milestones {
             let remainder = job.total_amount - job.released_amount;
@@ -360,5 +440,296 @@ mod test {
             token::Client::new(&env, &token_addr).balance(&client),
             100_000
         );
+    }
+
+    // --- Edge case and security tests ---
+
+    #[test]
+    #[should_panic(expected = "amount must be > 0")]
+    fn test_deposit_zero_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &0i128, &1u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "amount must be > 0")]
+    fn test_deposit_negative_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &-100i128, &1u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "job already exists")]
+    fn test_double_deposit_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+        // second deposit for same job should panic
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "only client can release")]
+    fn test_unauthorized_release_funds_by_freelancer_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        // freelancer attempts to release funds directly
+        cc.release_funds(&1u64, &freelancer, &0u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "invalid milestone index")]
+    fn test_release_funds_invalid_index_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        // client tries to release milestone index out of range
+        cc.release_funds(&1u64, &client, &5u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "milestone already released")]
+    fn test_release_funds_twice_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        // first release succeeds
+        cc.release_funds(&1u64, &client, &0u32);
+        // second release of same milestone should panic
+        cc.release_funds(&1u64, &client, &0u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "all milestones already released")]
+    fn test_release_milestone_overflow_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &900i128, &3u32);
+
+        cc.release_milestone(&1u64, &client);
+        cc.release_milestone(&1u64, &client);
+        cc.release_milestone(&1u64, &client);
+        // one extra
+        cc.release_milestone(&1u64, &client);
+    }
+
+    #[test]
+    #[should_panic(expected = "unauthorized")]
+    fn test_open_dispute_by_rando_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let rando = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        cc.open_dispute(&1u64, &rando);
+    }
+
+    #[test]
+    #[should_panic(expected = "job not disputed")]
+    fn test_resolve_dispute_not_disputed_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        cc.resolve_dispute(&1u64, &5000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "only client can refund")]
+    fn test_refund_by_non_client_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &1000i128, &2u32);
+
+        cc.refund(&1u64, &freelancer);
+    }
+
+    #[test]
+    #[should_panic(expected = "job not active")]
+    fn test_open_dispute_on_completed_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &9000i128, &3u32);
+
+        cc.release_milestone(&1u64, &client);
+        cc.release_milestone(&1u64, &client);
+        cc.release_milestone(&1u64, &client);
+
+        // attempt to open dispute after completion
+        cc.open_dispute(&1u64, &freelancer);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_resolve_dispute_non_admin_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let rando = Address::generate(&env);
+
+        let token_addr = setup_token(&env, &admin);
+        mint(&env, &token_addr, &client);
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.initialize(&admin);
+        cc.deposit(&1u64, &client, &freelancer, &token_addr, &9000i128, &3u32);
+
+        // rando attempts to resolve dispute (will fail on admin.require_auth or job not disputed)
+        cc.resolve_dispute(&1u64, &5000u32);
+    }
+
+    #[test]
+    #[should_panic(expected = "job not found")]
+    fn test_get_job_not_found_panics() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let contract_id = env.register_contract(None, EscrowContract);
+        let cc = EscrowContractClient::new(&env, &contract_id);
+
+        cc.get_job(&999u64);
     }
 }
