@@ -70,19 +70,29 @@ test("full gig lifecycle: post, bid, accept, fund, deliver, release", async ({ p
   });
 
   await page.route("https://soroban-testnet.stellar.org", async (route) => {
+    const postData = route.request().postDataJSON();
+    const method = postData.method;
+    let result: any = {};
+
+    if (method === "getAccount") {
+      result = { id: postData.params[0], sequence: "1" };
+    } else if (method === "simulateTransaction") {
+      result = {
+        results: [{ auth: [], xdr: "AAAAAgAAAAE=" }],
+        latestLedger: 1234,
+        minResourceFee: "100",
+        transactionData: "AAAAAAAAAAA="
+      };
+    } else if (method === "sendTransaction") {
+      result = { status: "PENDING", hash: "FAKE_TX_HASH", latestLedger: 1234 };
+    } else if (method === "getTransaction") {
+      result = { status: "SUCCESS", hash: "FAKE_TX_HASH", latestLedger: 1234 };
+    }
+
     await route.fulfill({
       status: 200,
       contentType: "application/json",
-      body: JSON.stringify({
-        jsonrpc: "2.0",
-        id: 1,
-        result: {
-          status: "SUCCESS",
-          hash: "FAKE_TX_HASH",
-          latestLedger: 1234,
-          latestLedgerCloseTime: 123456789,
-        },
-      }),
+      body: JSON.stringify({ jsonrpc: "2.0", id: postData.id, result }),
     });
   });
 
