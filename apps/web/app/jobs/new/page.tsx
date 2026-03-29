@@ -19,7 +19,7 @@ export default function NewJobPage() {
       const job = await api.jobs.create({
         title,
         description,
-        budget_usdc: budget,
+        budget_usdc: budget * 10_000_000,
         milestones,
         client_address: "GD...CLIENT",
       });

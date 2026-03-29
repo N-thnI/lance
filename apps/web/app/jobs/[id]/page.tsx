@@ -78,7 +78,7 @@ export default function JobDetailsPage() {
           <p className="text-gray-500">ID: {job.id} | Status: <span className="font-mono uppercase px-2 py-1 bg-zinc-100 dark:bg-zinc-800 rounded">{job.status}</span></p>
         </div>
         <div className="text-right">
-          <p className="text-2xl font-bold text-green-600">${job.budget_usdc} USDC</p>
+          <p className="text-2xl font-bold text-green-600">${(job.budget_usdc / 10_000_000).toLocaleString()} USDC</p>
           <p className="text-sm text-gray-500">{job.milestones} Milestones</p>
         </div>
       </div>
