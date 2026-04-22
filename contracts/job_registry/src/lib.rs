@@ -360,7 +360,8 @@ impl JobRegistryContract {
             return Err(JobRegistryError::JobNotFound);
         }
 
-        Ok(env.storage()
+        Ok(env
+            .storage()
             .persistent()
             .get(&DataKey::Bids(job_id))
             .unwrap_or_else(|| Vec::new(&env)))
