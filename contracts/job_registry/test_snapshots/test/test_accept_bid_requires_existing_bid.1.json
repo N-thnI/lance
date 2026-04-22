@@ -20,63 +20,13 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
-                  "bytes": "516d48617368"
+                  "bytes": "516d4a6f62"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 1000
+                    "lo": 5000
                   }
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "submit_bid",
-              "args": [
-                {
-                  "u64": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "bytes": "516d50726f706f73616c"
-                }
-              ]
-            }
-          },
-          "sub_invocations": []
-        }
-      ]
-    ],
-    [
-      [
-        "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-        {
-          "function": {
-            "contract_fn": {
-              "contract_address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
-              "function_name": "accept_bid",
-              "args": [
-                {
-                  "u64": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                 }
               ]
             }
@@ -133,72 +83,6 @@
       [
         {
           "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 1033654523790656264
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 1033654523790656264
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
-            "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-            "key": {
-              "ledger_key_nonce": {
-                "nonce": 5541220902715666415
-              }
-            },
-            "durability": "temporary"
-          }
-        },
-        [
-          {
-            "last_modified_ledger_seq": 0,
-            "data": {
-              "contract_data": {
-                "ext": "v0",
-                "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4",
-                "key": {
-                  "ledger_key_nonce": {
-                    "nonce": 5541220902715666415
-                  }
-                },
-                "durability": "temporary",
-                "val": "void"
-              }
-            },
-            "ext": "v0"
-          },
-          6311999
-        ]
-      ],
-      [
-        {
-          "contract_data": {
             "contract": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAHK3M",
             "key": {
               "vec": [
@@ -232,28 +116,7 @@
                 },
                 "durability": "persistent",
                 "val": {
-                  "vec": [
-                    {
-                      "map": [
-                        {
-                          "key": {
-                            "symbol": "freelancer"
-                          },
-                          "val": {
-                            "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                          }
-                        },
-                        {
-                          "key": {
-                            "symbol": "proposal_hash"
-                          },
-                          "val": {
-                            "bytes": "516d50726f706f73616c"
-                          }
-                        }
-                      ]
-                    }
-                  ]
+                  "vec": []
                 }
               }
             },
@@ -306,7 +169,7 @@
                       "val": {
                         "i128": {
                           "hi": 0,
-                          "lo": 1000
+                          "lo": 5000
                         }
                       }
                     },
@@ -322,16 +185,14 @@
                       "key": {
                         "symbol": "freelancer"
                       },
-                      "val": {
-                        "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                      }
+                      "val": "void"
                     },
                     {
                       "key": {
                         "symbol": "metadata_hash"
                       },
                       "val": {
-                        "bytes": "516d48617368"
+                        "bytes": "516d4a6f62"
                       }
                     },
                     {
@@ -341,7 +202,7 @@
                       "val": {
                         "vec": [
                           {
-                            "symbol": "InProgress"
+                            "symbol": "Open"
                           }
                         ]
                       }
@@ -438,12 +299,12 @@
                   "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                 },
                 {
-                  "bytes": "516d48617368"
+                  "bytes": "516d4a6f62"
                 },
                 {
                   "i128": {
                     "hi": 0,
-                    "lo": 1000
+                    "lo": 5000
                   }
                 }
               ]
@@ -466,119 +327,6 @@
               },
               {
                 "symbol": "post_job"
-              }
-            ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
-              },
-              {
-                "symbol": "submit_bid"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "u64": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "bytes": "516d50726f706f73616c"
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "string": "job_registry"
-              },
-              {
-                "string": "BidSubmitted"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "freelancer"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "job_id"
-                  },
-                  "val": {
-                    "u64": 1
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "proposal_hash"
-                  },
-                  "val": {
-                    "bytes": "516d50726f706f73616c"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "timestamp"
-                  },
-                  "val": {
-                    "u64": 0
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "submit_bid"
               }
             ],
             "data": "void"
@@ -627,62 +375,6 @@
       "event": {
         "ext": "v0",
         "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
-        "type_": "contract",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "string": "job_registry"
-              },
-              {
-                "string": "BidAccepted"
-              }
-            ],
-            "data": {
-              "map": [
-                {
-                  "key": {
-                    "symbol": "client"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "freelancer"
-                  },
-                  "val": {
-                    "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "job_id"
-                  },
-                  "val": {
-                    "u64": 1
-                  }
-                },
-                {
-                  "key": {
-                    "symbol": "timestamp"
-                  },
-                  "val": {
-                    "u64": 0
-                  }
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
         "type_": "diagnostic",
         "body": {
           "v0": {
@@ -694,66 +386,9 @@
                 "symbol": "accept_bid"
               }
             ],
-            "data": "void"
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": null,
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_call"
-              },
-              {
-                "bytes": "0000000000000000000000000000000000000000000000000000000000000003"
-              },
-              {
-                "symbol": "submit_deliverable"
-              }
-            ],
-            "data": {
-              "vec": [
-                {
-                  "u64": 1
-                },
-                {
-                  "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
-                },
-                {
-                  "bytes": ""
-                }
-              ]
-            }
-          }
-        }
-      },
-      "failed_call": false
-    },
-    {
-      "event": {
-        "ext": "v0",
-        "contract_id": "0000000000000000000000000000000000000000000000000000000000000003",
-        "type_": "diagnostic",
-        "body": {
-          "v0": {
-            "topics": [
-              {
-                "symbol": "fn_return"
-              },
-              {
-                "symbol": "submit_deliverable"
-              }
-            ],
             "data": {
               "error": {
-                "contract": 4
+                "contract": 6
               }
             }
           }
@@ -774,7 +409,7 @@
               },
               {
                 "error": {
-                  "contract": 4
+                  "contract": 6
                 }
               }
             ],
@@ -799,7 +434,7 @@
               },
               {
                 "error": {
-                  "contract": 4
+                  "contract": 6
                 }
               }
             ],
@@ -809,7 +444,7 @@
                   "string": "contract call failed"
                 },
                 {
-                  "symbol": "submit_deliverable"
+                  "symbol": "accept_bid"
                 },
                 {
                   "vec": [
@@ -817,10 +452,10 @@
                       "u64": 1
                     },
                     {
-                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD2KM"
                     },
                     {
-                      "bytes": ""
+                      "address": "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAFCT4"
                     }
                   ]
                 }
@@ -844,7 +479,7 @@
               },
               {
                 "error": {
-                  "contract": 4
+                  "contract": 6
                 }
               }
             ],

@@ -54,6 +54,8 @@ pub enum JobRegistryError {
     InvalidInput = 4,
     /// Indicates an invalid state transition or operation (error code: 5).
     InvalidState = 5,
+    /// Indicates the selected freelancer did not submit a bid for the job (error code: 6).
+    BidNotFound = 6,
 }
 
 /// Event emitted when a bid is successfully submitted.
@@ -66,6 +68,16 @@ pub struct BidSubmittedEvent {
     pub job_id: u64,
     pub freelancer: Address,
     pub proposal_hash: Bytes,
+    pub timestamp: u64,
+}
+
+/// Event emitted when a bid is accepted.
+#[contracttype]
+#[derive(Clone)]
+pub struct BidAcceptedEvent {
+    pub job_id: u64,
+    pub client: Address,
+    pub freelancer: Address,
     pub timestamp: u64,
 }
 
@@ -206,13 +218,41 @@ impl JobRegistryContract {
             return Err(JobRegistryError::Unauthorized);
         }
 
+        let bids_key = DataKey::Bids(job_id);
+        let bids: Vec<BidRecord> = env
+            .storage()
+            .persistent()
+            .get(&bids_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut bid_found = false;
+        let mut idx = 0u32;
+        let bids_len = bids.len();
+        while idx < bids_len {
+            let bid = bids.get(idx).expect("bid vector index");
+            if bid.freelancer == freelancer {
+                bid_found = true;
+                break;
+            }
+            idx += 1;
+        }
+
+        if !bid_found {
+            return Err(JobRegistryError::BidNotFound);
+        }
+
         job.freelancer = Some(freelancer.clone());
         job.status = JobStatus::InProgress;
         env.storage().persistent().set(&key, &job);
 
         env.events().publish(
             ("job_registry", "BidAccepted"),
-            (job_id, freelancer, env.ledger().timestamp()),
+            BidAcceptedEvent {
+                job_id,
+                client,
+                freelancer,
+                timestamp: env.ledger().timestamp(),
+            },
         );
 
         Ok(())
@@ -433,6 +473,48 @@ mod test {
 
         let late_proposal = Bytes::from_slice(&env, b"QmLateProposal");
         cc.submit_bid(&1u64, &freelancer2, &late_proposal);
+    }
+
+    #[test]
+    fn test_accept_bid_success() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let contract_id = env.register_contract(None, JobRegistryContract);
+        let cc = JobRegistryContractClient::new(&env, &contract_id);
+
+        let hash = Bytes::from_slice(&env, b"QmJob");
+        cc.post_job(&1u64, &client, &hash, &5000i128);
+
+        let proposal = Bytes::from_slice(&env, b"QmProposal");
+        cc.submit_bid(&1u64, &freelancer, &proposal);
+
+        cc.accept_bid(&1u64, &client, &freelancer);
+
+        let job = cc.get_job(&1u64);
+        assert_eq!(job.status, JobStatus::InProgress);
+        assert_eq!(job.freelancer, Some(freelancer));
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #6)")]
+    fn test_accept_bid_requires_existing_bid() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let contract_id = env.register_contract(None, JobRegistryContract);
+        let cc = JobRegistryContractClient::new(&env, &contract_id);
+
+        let hash = Bytes::from_slice(&env, b"QmJob");
+        cc.post_job(&1u64, &client, &hash, &5000i128);
+
+        cc.accept_bid(&1u64, &client, &freelancer);
     }
 
     #[test]
