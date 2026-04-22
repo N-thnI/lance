@@ -4,6 +4,9 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, Address, Bytes, Env, IntoVal, Symbol, Vec,
 };
 
+mod profile;
+mod storage;
+
 // Types matching Job Registry contract's public types for cross-contract decoding
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -48,7 +51,6 @@ pub struct ReputationScore {
 
 #[contracttype]
 pub enum DataKey {
-    Score(Address, Role),
     Admin,
     JobRegistry,
     Reviewed(u64, Address),
@@ -93,7 +95,13 @@ impl ReputationContract {
         // call JobRegistry.get_job(job_id) and decode into local JobRecord
         let get_sym = Symbol::new(&env, "get_job");
         let args = soroban_sdk::vec![&env, job_id.into_val(&env)];
-        let job: JobRecord = env.invoke_contract::<JobRecord>(&registry_addr, &get_sym, args);
+        let job: JobRecord = env
+            .invoke_contract::<Result<JobRecord, soroban_sdk::Error>>(
+                &registry_addr,
+                &get_sym,
+                args,
+            )
+            .unwrap();
 
         // verify job is completed (ratings only allowed after completion)
         assert!(job.status == JobStatus::Completed, "job not completed");
@@ -115,21 +123,19 @@ impl ReputationContract {
         );
 
         // update reputation aggregates for target
-        let mut rep = Self::get_score(env.clone(), target.clone(), Role::Freelancer);
-        // we'll treat target role as Freelancer for simplicity; callers should ensure correct role
-        rep.total_points = rep.total_points.saturating_add(score as i32);
-        rep.reviews = rep.reviews.saturating_add(1);
-        rep.total_jobs = rep.total_jobs.saturating_add(1);
+        let mut profile = storage::read_profile_or_default(&env, &target);
 
-        // compute new averaged score in basis points: avg = total_points / reviews, scaled
-        let avg = rep.total_points / (rep.reviews as i32);
+        // We assume target is a freelancer for now in submit_rating
+        // In a more complex system, we might need to know which role was rated.
+        profile.freelancer_points = profile.freelancer_points.saturating_add(score as i32);
+        profile.freelancer_jobs = profile.freelancer_jobs.saturating_add(1);
+
+        // compute new averaged score in basis points: avg = total_points / jobs, scaled
+        let avg = profile.freelancer_points / (profile.freelancer_jobs as i32);
         let bps = avg.saturating_mul(2000); // 1->2000 ... 5->10000
-        rep.score = Self::clamp_score(bps);
+        profile.freelancer_score = Self::clamp_score(bps);
 
-        env.storage()
-            .persistent()
-            .set(&DataKey::Score(rep.address.clone(), rep.role.clone()), &rep);
-
+        storage::write_profile(&env, &target, &profile);
         env.storage().persistent().set(&reviewed_key, &true);
     }
 
@@ -143,14 +149,21 @@ impl ReputationContract {
             .expect("not initialized");
         admin.require_auth();
 
-        let mut reputation = Self::get_score(env.clone(), address, role.clone());
-        reputation.score = Self::clamp_score(reputation.score.saturating_add(delta));
-        reputation.total_jobs = reputation.total_jobs.saturating_add(1);
+        let mut profile = storage::read_profile_or_default(&env, &address);
+        match role {
+            Role::Client => {
+                profile.client_score =
+                    Self::clamp_score(profile.client_score.saturating_add(delta));
+                profile.client_jobs = profile.client_jobs.saturating_add(1);
+            }
+            Role::Freelancer => {
+                profile.freelancer_score =
+                    Self::clamp_score(profile.freelancer_score.saturating_add(delta));
+                profile.freelancer_jobs = profile.freelancer_jobs.saturating_add(1);
+            }
+        }
 
-        env.storage().persistent().set(
-            &DataKey::Score(reputation.address.clone(), role),
-            &reputation,
-        );
+        storage::write_profile(&env, &address, &profile);
     }
 
     /// Slash address for fraud / abandonment — reduces score by 20%.
@@ -162,27 +175,53 @@ impl ReputationContract {
             .expect("not initialized");
         admin.require_auth();
 
-        let mut reputation = Self::get_score(env.clone(), address, role.clone());
-        reputation.score = Self::clamp_score(reputation.score.saturating_sub(2000));
+        let mut profile = storage::read_profile_or_default(&env, &address);
+        match role {
+            Role::Client => {
+                profile.client_score = Self::clamp_score(profile.client_score.saturating_sub(2000));
+            }
+            Role::Freelancer => {
+                profile.freelancer_score =
+                    Self::clamp_score(profile.freelancer_score.saturating_sub(2000));
+            }
+        }
 
-        env.storage().persistent().set(
-            &DataKey::Score(reputation.address.clone(), role),
-            &reputation,
-        );
+        storage::write_profile(&env, &address, &profile);
     }
 
     pub fn get_score(env: Env, address: Address, role: Role) -> ReputationScore {
-        env.storage()
-            .persistent()
-            .get(&DataKey::Score(address.clone(), role.clone()))
-            .unwrap_or_else(|| ReputationScore {
+        let profile = storage::read_profile_or_default(&env, &address);
+        match role {
+            Role::Client => ReputationScore {
                 address,
-                role,
-                score: 5000,
-                total_jobs: 0,
-                total_points: 0,
-                reviews: 0,
-            })
+                role: Role::Client,
+                score: profile.client_score,
+                total_jobs: profile.client_jobs,
+                total_points: profile.client_points,
+                reviews: profile.client_jobs, // reviews and total_jobs are unified
+            },
+            Role::Freelancer => ReputationScore {
+                address,
+                role: Role::Freelancer,
+                score: profile.freelancer_score,
+                total_jobs: profile.freelancer_jobs,
+                total_points: profile.freelancer_points,
+                reviews: profile.freelancer_jobs,
+            },
+        }
+    }
+
+    /// Update profile metadata hash (IPFS CID)
+    pub fn update_profile_metadata(env: Env, address: Address, metadata_hash: Bytes) {
+        address.require_auth();
+        let mut profile = storage::read_profile_or_default(&env, &address);
+        profile.metadata_hash = Some(metadata_hash);
+        storage::write_profile(&env, &address, &profile);
+    }
+
+    /// Get profile metadata hash
+    pub fn get_profile_metadata(env: Env, address: Address) -> Option<Bytes> {
+        storage::read_profile(&env, &address).and_then(|p| p.metadata_hash)
     }
 
     /// Frontend-friendly aggregate metrics for public profile pages.
@@ -265,5 +304,45 @@ mod test {
 
         let score = client.get_score(&address, &Role::Client);
         assert_eq!(score.score, 3000); // 5000 - 2000
+    }
+
+    #[test]
+    fn test_profile_metadata() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let address = Address::generate(&env);
+        let contract_id = env.register_contract(None, ReputationContract);
+        let client = ReputationContractClient::new(&env, &contract_id);
+
+        let hash = Bytes::from_slice(&env, b"QmProfileHash");
+        client.update_profile_metadata(&address, &hash);
+
+        let saved_hash = client.get_profile_metadata(&address);
+        assert_eq!(saved_hash, Some(hash));
+    }
+
+    #[test]
+    fn test_unified_storage() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let admin = Address::generate(&env);
+        let address = Address::generate(&env);
+        let contract_id = env.register_contract(None, ReputationContract);
+        let client = ReputationContractClient::new(&env, &contract_id);
+
+        client.initialize(&admin);
+
+        // Update freelancer score
+        client.update_score(&address, &Role::Freelancer, &1000);
+        // Update client score for SAME address
+        client.update_score(&address, &Role::Client, &500);
+
+        let f_score = client.get_score(&address, &Role::Freelancer);
+        let c_score = client.get_score(&address, &Role::Client);
+
+        assert_eq!(f_score.score, 6000);
+        assert_eq!(c_score.score, 5500);
     }
 }

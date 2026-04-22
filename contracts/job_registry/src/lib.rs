@@ -371,18 +371,48 @@ impl JobRegistryContract {
         Ok(())
     }
 
-    pub fn get_job(env: Env, job_id: u64) -> JobRecord {
+    /// Retrieves a job record by its ID.
+    ///
+    /// This is a view function that provides the full state of a job,
+    /// including its status, client, and assigned freelancer.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `job_id` - The unique identifier of the job
+    ///
+    /// # Returns
+    /// * `Ok(JobRecord)` - The job record if found
+    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
+    pub fn get_job(env: Env, job_id: u64) -> Result<JobRecord, JobRegistryError> {
         env.storage()
             .persistent()
             .get(&DataKey::Job(job_id))
-            .expect("job not found")
+            .ok_or(JobRegistryError::JobNotFound)
     }
 
-    pub fn get_bids(env: Env, job_id: u64) -> Vec<BidRecord> {
-        env.storage()
+    /// Retrieves all bids for a specific job.
+    ///
+    /// This is a view function that returns the history of all bids
+    /// submitted for a given job. If a job exists but has no bids,
+    /// an empty vector is returned.
+    ///
+    /// # Arguments
+    /// * `env` - The Soroban environment
+    /// * `job_id` - The unique identifier of the job
+    ///
+    /// # Returns
+    /// * `Ok(Vec<BidRecord>)` - A vector of all bids submitted for the job
+    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
+    pub fn get_bids(env: Env, job_id: u64) -> Result<Vec<BidRecord>, JobRegistryError> {
+        if !env.storage().persistent().has(&DataKey::Job(job_id)) {
+            return Err(JobRegistryError::JobNotFound);
+        }
+
+        Ok(env
+            .storage()
             .persistent()
             .get(&DataKey::Bids(job_id))
-            .unwrap_or_else(|| Vec::new(&env))
+            .unwrap_or_else(|| Vec::new(&env)))
     }
 
     pub fn get_deliverable(env: Env, job_id: u64) -> Bytes {
@@ -857,5 +887,25 @@ mod test {
 
         let empty_deliverable = Bytes::from_slice(&env, b"");
         cc.submit_deliverable(&1u64, &freelancer, &empty_deliverable);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_get_job_not_found() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, JobRegistryContract);
+        let cc = JobRegistryContractClient::new(&env, &contract_id);
+
+        cc.get_job(&999u64);
+    }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_get_bids_job_not_found() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, JobRegistryContract);
+        let cc = JobRegistryContractClient::new(&env, &contract_id);
+
+        cc.get_bids(&999u64);
     }
 }
