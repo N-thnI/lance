@@ -75,6 +75,7 @@ pub enum EscrowError {
     JobNotFound = 5,
     InvalidState = 6,
     AmountMismatch = 7,
+    NoPendingMilestones = 8,
 }
 
 #[contracttype]
@@ -93,6 +94,15 @@ pub struct DepositEvent {
     pub job_id: u64,
     pub amount: i128,
     pub deposited_at: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct ReleaseMilestoneEvent {
+    pub job_id: u64,
+    pub milestone_index: u32,
+    pub amount: i128,
+    pub released_at: u64,
 }
 
 #[contract]
@@ -256,32 +266,44 @@ impl EscrowContract {
     }
 
     /// Client approves a milestone -- releases next pending milestone to freelancer.
-    pub fn release_milestone(env: Env, job_id: u64, caller: Address) {
+    pub fn release_milestone(env: Env, job_id: u64, caller: Address) -> Result<(), EscrowError> {
         caller.require_auth();
 
         let key = DataKey::Job(job_id);
-        let mut job: EscrowJob = env.storage().persistent().get(&key).expect("job not found");
+        let mut job: EscrowJob = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .ok_or(EscrowError::JobNotFound)?;
 
-        assert!(
-            job.status == EscrowStatus::Funded || job.status == EscrowStatus::WorkInProgress,
-            "job not in releaseable state"
-        );
-        assert!(caller == job.client, "only client can release");
+        if !(job.status == EscrowStatus::Funded || job.status == EscrowStatus::WorkInProgress) {
+            return Err(EscrowError::InvalidState);
+        }
 
-        let mut found_idx = None;
+        if caller != job.client {
+            return Err(EscrowError::Unauthorized);
+        }
+
+        // Find next pending milestone
+        let mut found_idx: Option<u32> = None;
         for i in 0..job.milestones.len() {
-            if job.milestones.get(i).unwrap().status == MilestoneStatus::Pending {
-                found_idx = Some(i);
+            let idx = i as u32;
+            if job.milestones.get(idx).unwrap().status == MilestoneStatus::Pending {
+                found_idx = Some(idx);
                 break;
             }
         }
 
-        let idx = found_idx.expect("all milestones already released");
+        let idx = match found_idx {
+            Some(i) => i,
+            None => return Err(EscrowError::NoPendingMilestones),
+        };
+
         let mut milestone = job.milestones.get(idx).unwrap();
         milestone.status = MilestoneStatus::Released;
         job.milestones.set(idx, milestone.clone());
 
-        job.released_amount += milestone.amount;
+        job.released_amount = job.released_amount.saturating_add(milestone.amount);
         job.status = EscrowStatus::WorkInProgress;
 
         let token_client = token::Client::new(&env, &job.token);
@@ -296,6 +318,17 @@ impl EscrowContract {
         }
 
         env.storage().persistent().set(&key, &job);
+
+        // Emit event
+        let evt = ReleaseMilestoneEvent {
+            job_id,
+            milestone_index: idx,
+            amount: milestone.amount,
+            released_at: env.ledger().timestamp(),
+        };
+        env.events().publish(("escrow", "ReleaseMilestone"), evt);
+
+        Ok(())
     }
 
     /// Happy-path release for an explicit milestone index (0-based).
@@ -550,13 +583,13 @@ mod test {
         let tc = token::Client::new(&env, &token_addr);
         assert_eq!(tc.balance(&contract_id), 9000);
 
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         assert_eq!(tc.balance(&freelancer), 3000);
 
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         assert_eq!(tc.balance(&freelancer), 6000);
 
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         let job = cc.get_job(&1u64);
         assert_eq!(job.status, EscrowStatus::Completed);
         assert_eq!(tc.balance(&freelancer), 9000);
@@ -593,7 +626,7 @@ mod test {
         assert_eq!(tc.balance(&contract_id), 10_000);
 
         // Release first milestone
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         assert_eq!(tc.balance(&freelancer), 2000);
 
         // Check milestone status
@@ -602,7 +635,7 @@ mod test {
         assert_eq!(statuses.get(1).unwrap(), MilestoneStatus::Pending);
 
         // Release second milestone
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         assert_eq!(tc.balance(&freelancer), 5000);
 
         // Release third milestone
@@ -652,7 +685,8 @@ mod test {
         cc.add_milestone(&1u64, &500i128);
     cc.deposit(&1u64, &1000i128).unwrap();
 
-        cc.release_milestone(&1u64, &rando);
+    let res = cc.release_milestone(&1u64, &rando);
+    assert!(res.is_err());
     }
 
     #[test]
@@ -679,7 +713,7 @@ mod test {
         cc.add_milestone(&1u64, &2500i128);
     cc.deposit(&1u64, &10_000i128).unwrap();
 
-        cc.release_milestone(&1u64, &client);
+    cc.release_milestone(&1u64, &client).unwrap();
         let tc = token::Client::new(&env, &token_addr);
         assert_eq!(tc.balance(&freelancer), 2500);
 
