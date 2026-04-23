@@ -117,7 +117,6 @@ pub struct DepositEvent {
     pub amount: i128,
     pub deposited_at: u64,
 }
-
 #[contracttype]
 #[derive(Clone)]
 pub struct ReleaseMilestoneEvent {
@@ -755,9 +754,8 @@ pub fn get_job(env: Env, job_id: u64) -> EscrowJob {
 #[cfg(test)]
 mod test {
     use super::*;
-    use job_registry::{JobRegistryContract, JobRegistryContractClient, JobStatus};
     use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::{token, Address, Bytes, BytesN, Env};
+    use soroban_sdk::{token, Address, Env};
 
     fn setup_token(env: &Env, admin: &Address) -> Address {
         let contract = env.register_stellar_asset_contract_v2(admin.clone());
@@ -858,9 +856,10 @@ mod test {
         assert_eq!(job.status, EscrowStatus::Completed);
     }
 
-   #[test]
-    #[should_panic(expected = "Error(Contract, #3)")]
-    fn test_refund_by_non_client_panics() {
+    #[test]
+    // Initialization now returns EscrowError::AlreadyInitialized which surfaces
+    // as a host error with numeric code #1. Match that in the test.
+    #[should_panic(expected = "Error(Contract, #1)")]
     fn test_double_init() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1811,8 +1810,8 @@ mod test {
         assert_eq!(job.status, EscrowStatus::Disputed);
     }
 
-    #[test]
-    #[should_panic(expected = "Error(WasmVm, InvalidAction)")]
+  #[test]
+    #[should_panic(expected = "Error(Contract, #3)")]
     fn test_refund_by_non_client_panics() {
         let env = Env::default();
         env.mock_all_auths();
