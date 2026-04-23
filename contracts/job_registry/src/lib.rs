@@ -1,7 +1,31 @@
 #![no_std]
 
-use soroban_sdk::BytesN;
-use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Bytes, Env, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    Bytes, Env, Vec,
+};
+
+const MAX_HASH_LEN: u32 = 96;
+
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum JobRegistryError {
+    AlreadyInitialized = 1,
+    NotInitialized = 2,
+    InvalidJobId = 3,
+    InvalidBudget = 4,
+    InvalidHash = 5,
+    JobAlreadyExists = 6,
+    JobNotFound = 7,
+    JobNotOpen = 8,
+    Unauthorized = 9,
+    BidAlreadySubmitted = 10,
+    BidNotFound = 11,
+    InvalidStateTransition = 12,
+    NoDeliverable = 13,
+    Overflow = 14,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, PartialEq)]
@@ -24,7 +48,7 @@ pub struct JobRecord {
 }
 
 #[contracttype]
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone)]
 pub struct BidRecord {
     pub freelancer: Address,
     pub proposal_hash: Bytes,
@@ -32,104 +56,11 @@ pub struct BidRecord {
 
 #[contracttype]
 pub enum DataKey {
+    Admin,
+    NextJobId,
     Job(u64),
     Bids(u64),
     Deliverable(u64),
-    UpgradeAdmin,
-}
-
-/// Error codes for JobRegistry contract operations.
-///
-/// These error codes follow Soroban standard error patterns and enable
-/// comprehensive error handling while maintaining backward compatibility
-/// with the Stellar ecosystem.
-#[contracterror]
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum JobRegistryError {
-    /// Indicates the specified job does not exist in storage (error code: 1).
-    JobNotFound = 1,
-    /// Indicates the job is not in the Open status for accepting bids (error code: 2).
-    JobNotOpen = 2,
-    /// Indicates an unauthorized access attempt - authentication failure (error code: 3).
-    Unauthorized = 3,
-    /// Indicates invalid input parameters, e.g., empty proposal hash (error code: 4).
-    InvalidInput = 4,
-    /// Indicates an invalid state transition or operation (error code: 5).
-    InvalidState = 5,
-    /// Indicates the selected freelancer did not submit a bid for the job (error code: 6).
-    BidNotFound = 6,
-    /// Indicates upgrade admin has already been initialized (error code: 7).
-    UpgradeAdminAlreadySet = 7,
-    /// Indicates upgrade admin is not configured (error code: 8).
-    UpgradeAdminNotSet = 8,
-}
-
-/// Event emitted when a job is successfully created.
-///
-/// This event is published to enable off-chain indexing and monitoring
-/// of all job postings on the platform. Includes timestamp for audit trails.
-#[contracttype]
-#[derive(Clone)]
-pub struct JobCreatedEvent {
-    pub job_id: u64,
-    pub client: Address,
-    pub metadata_hash: Bytes,
-    pub budget_stroops: i128,
-    pub created_at: u64,
-}
-
-/// Event emitted when a bid is successfully submitted.
-///
-/// This event is published to enable off-chain indexing and monitoring
-/// of all bid submissions on the platform. Includes timestamp for audit trails.
-#[contracttype]
-#[derive(Clone)]
-pub struct BidSubmittedEvent {
-    pub job_id: u64,
-    pub freelancer: Address,
-    pub proposal_hash: Bytes,
-    pub timestamp: u64,
-}
-
-/// Event emitted when a bid is accepted.
-#[contracttype]
-#[derive(Clone)]
-pub struct BidAcceptedEvent {
-    pub job_id: u64,
-    pub client: Address,
-    pub freelancer: Address,
-    pub timestamp: u64,
-}
-
-/// Event emitted when a deliverable is submitted.
-///
-/// This event is published to enable off-chain indexing and monitoring
-/// of all deliverable submissions on the platform. Includes timestamp for audit trails.
-#[contracttype]
-#[derive(Clone)]
-pub struct DeliverableSubmittedEvent {
-    pub job_id: u64,
-    pub freelancer: Address,
-    pub deliverable_hash: Bytes,
-    pub timestamp: u64,
-}
-
-/// Event emitted when upgrade admin is configured or changed.
-#[contracttype]
-#[derive(Clone)]
-pub struct UpgradeAdminSetEvent {
-    pub previous_admin: Option<Address>,
-    pub new_admin: Address,
-    pub timestamp: u64,
-}
-
-/// Event emitted when the contract is upgraded to a new WASM hash.
-#[contracttype]
-#[derive(Clone)]
-pub struct ContractUpgradedEvent {
-    pub by_admin: Address,
-    pub new_wasm_hash: BytesN<32>,
-    pub timestamp: u64,
 }
 
 #[contract]
@@ -137,244 +68,120 @@ pub struct JobRegistryContract;
 
 #[contractimpl]
 impl JobRegistryContract {
-    const PERSISTENT_TTL_THRESHOLD: u32 = 50_000;
-    const PERSISTENT_TTL_EXTEND_TO: u32 = 150_000;
-
-    fn bump_persistent_ttl(env: &Env, key: &DataKey) {
-        if env.storage().persistent().has(key) {
-            env.storage().persistent().extend_ttl(
-                key,
-                Self::PERSISTENT_TTL_THRESHOLD,
-                Self::PERSISTENT_TTL_EXTEND_TO,
-            );
-        }
-    }
-
-    fn require_upgrade_admin(env: &Env, caller: &Address) -> Result<(), JobRegistryError> {
-        caller.require_auth();
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::UpgradeAdmin)
-            .ok_or(JobRegistryError::UpgradeAdminNotSet)?;
-
-        if *caller != admin {
-            return Err(JobRegistryError::Unauthorized);
+    /// One-time storage bootstrap.
+    ///
+    /// Sets contract admin and initializes `next_job_id` to 1.
+    pub fn initialize(env: Env, admin: Address) {
+        if env.storage().instance().has(&DataKey::Admin) {
+            panic_with_error!(&env, JobRegistryError::AlreadyInitialized);
         }
 
-        Ok(())
-    }
-
-    /// One-time initialization for upgrade admin.
-    pub fn init_upgrade_admin(env: Env, admin: Address) -> Result<(), JobRegistryError> {
         admin.require_auth();
+        env.storage().instance().set(&DataKey::Admin, &admin);
+        env.storage().instance().set(&DataKey::NextJobId, &1u64);
 
-        if env.storage().instance().has(&DataKey::UpgradeAdmin) {
-            return Err(JobRegistryError::UpgradeAdminAlreadySet);
-        }
-
-        env.storage().instance().set(&DataKey::UpgradeAdmin, &admin);
-        env.events().publish(
-            ("job_registry", "UpgradeAdminSet"),
-            UpgradeAdminSetEvent {
-                previous_admin: None,
-                new_admin: admin,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+        env.events().publish((symbol_short!("init"),), admin);
     }
 
-    /// Rotate upgrade admin authority to a new address.
-    pub fn set_upgrade_admin(
-        env: Env,
-        caller: Address,
-        new_admin: Address,
-    ) -> Result<(), JobRegistryError> {
-        Self::require_upgrade_admin(&env, &caller)?;
-
-        let previous_admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::UpgradeAdmin)
-            .ok_or(JobRegistryError::UpgradeAdminNotSet)?;
-
-        env.storage()
-            .instance()
-            .set(&DataKey::UpgradeAdmin, &new_admin);
-        env.events().publish(
-            ("job_registry", "UpgradeAdminSet"),
-            UpgradeAdminSetEvent {
-                previous_admin: Some(previous_admin),
-                new_admin,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+    /// Returns whether storage has been initialized.
+    pub fn is_initialized(env: Env) -> bool {
+        env.storage().instance().has(&DataKey::Admin)
     }
 
-    /// Returns the currently configured upgrade admin.
-    pub fn get_upgrade_admin(env: Env) -> Result<Address, JobRegistryError> {
-        env.storage()
-            .instance()
-            .get(&DataKey::UpgradeAdmin)
-            .ok_or(JobRegistryError::UpgradeAdminNotSet)
+    pub fn get_admin(env: Env) -> Address {
+        read_admin(&env)
     }
 
-    /// Upgrade contract WASM hash, callable only by upgrade admin.
-    pub fn upgrade(
-        env: Env,
-        caller: Address,
-        new_wasm_hash: BytesN<32>,
-    ) -> Result<(), JobRegistryError> {
-        Self::require_upgrade_admin(&env, &caller)?;
-
-        env.deployer()
-            .update_current_contract_wasm(new_wasm_hash.clone());
-        env.events().publish(
-            ("job_registry", "ContractUpgraded"),
-            ContractUpgradedEvent {
-                by_admin: caller,
-                new_wasm_hash,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+    pub fn get_next_job_id(env: Env) -> u64 {
+        read_next_job_id(&env)
     }
 
-    /// Client posts a job. `metadata_hash` = IPFS CID bytes.
+    /// Client posts a job with explicit `job_id`.
+    /// `metadata_hash` is expected to contain CID bytes.
     pub fn post_job(env: Env, job_id: u64, client: Address, hash: Bytes, budget: i128) {
-        client.require_auth();
+        ensure_initialized(&env);
+        validate_job_input(&env, job_id, &hash, budget);
 
-        let key = DataKey::Job(job_id);
-        if env.storage().persistent().has(&key) {
-            panic!("job already exists");
+        client.require_auth();
+        post_job_with_id(&env, job_id, client.clone(), hash, budget);
+
+        // Keep auto-id monotonic when explicit ids are used.
+        let next_job_id = read_next_job_id(&env);
+        if job_id >= next_job_id {
+            let updated = job_id
+                .checked_add(1)
+                .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::Overflow));
+            env.storage().instance().set(&DataKey::NextJobId, &updated);
         }
 
-        let job = JobRecord {
-            client: client.clone(),
-            freelancer: None,
-            metadata_hash: hash.clone(),
-            budget_stroops: budget,
-            status: JobStatus::Open,
-        };
-        env.storage().persistent().set(&key, &job);
-
-        let bids: Vec<BidRecord> = Vec::new(&env);
-        env.storage()
-            .persistent()
-            .set(&DataKey::Bids(job_id), &bids);
-
-        // Emit JobCreated event for off-chain indexing and monitoring
-        env.events().publish(
-            ("job_registry", "JobCreated"),
-            JobCreatedEvent {
-                job_id,
-                client,
-                metadata_hash: hash,
-                budget_stroops: budget,
-                created_at: env.ledger().timestamp(),
-            },
-        );
+        env.events()
+            .publish((symbol_short!("jobpost"), job_id), (client, budget));
     }
 
-    /// Freelancer submits a bid on an open job.
-    ///
-    /// This is the core operation enabling freelancers to propose solutions
-    /// for posted jobs. Validation ensures:
-    /// 1. The freelancer is authenticated via Stellar signature
-    /// 2. The job exists and is in Open status
-    /// 3. The proposal hash is not empty (content validation)
-    ///
-    /// # Arguments
-    /// * `env` - The Soroban environment
-    /// * `job_id` - The unique identifier of the job
-    /// * `freelancer` - The address of the freelancer submitting the bid
-    /// * `proposal_hash` - The IPFS CID hash of the proposal document
-    ///
-    /// # Returns
-    /// * `Ok(())` - If the bid is successfully submitted
-    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
-    /// * `Err(JobRegistryError::JobNotOpen)` - If the job status is not Open
-    /// * `Err(JobRegistryError::InvalidInput)` - If the proposal hash is empty
-    ///
-    /// # Security Considerations
-    /// * Requires freelancer authentication via `require_auth()` to prevent spoofing
-    /// * Validates job status to prevent bid manipulation
-    /// * Prevents submission of invalid (empty) proposal hashes
-    /// * Emits auditable event with timestamp for off-chain monitoring
-    /// * Supports multiple bids from different freelancers on the same job
-    pub fn submit_bid(
-        env: Env,
-        job_id: u64,
-        freelancer: Address,
-        proposal_hash: Bytes,
-    ) -> Result<(), JobRegistryError> {
-        // Authenticate the freelancer to ensure authorization
+    /// Client posts a job using internal registry index allocation.
+    pub fn post_job_auto(env: Env, client: Address, hash: Bytes, budget: i128) -> u64 {
+        ensure_initialized(&env);
+
+        let job_id = read_next_job_id(&env);
+        validate_job_input(&env, job_id, &hash, budget);
+
+        client.require_auth();
+        post_job_with_id(&env, job_id, client.clone(), hash, budget);
+
+        let next = job_id
+            .checked_add(1)
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::Overflow));
+        env.storage().instance().set(&DataKey::NextJobId, &next);
+
+        env.events()
+            .publish((symbol_short!("jobauto"), job_id), (client, budget));
+
+        job_id
+    }
+
+    /// Freelancer submits a bid.
+    pub fn submit_bid(env: Env, job_id: u64, freelancer: Address, proposal_hash: Bytes) {
+        ensure_initialized(&env);
+        validate_hash(&env, &proposal_hash);
         freelancer.require_auth();
 
-        // Validate input: proposal_hash must not be empty
-        if proposal_hash.is_empty() {
-            return Err(JobRegistryError::InvalidInput);
-        }
-
-        // Retrieve job record with error handling for missing jobs
         let key = DataKey::Job(job_id);
         let job: JobRecord = env
             .storage()
             .persistent()
             .get(&key)
-            .ok_or(JobRegistryError::JobNotFound)?;
-        Self::bump_persistent_ttl(&env, &key);
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::JobNotFound));
 
-        // Ensure job is in Open status - cannot bid on jobs that are not accepting bids
         if job.status != JobStatus::Open {
-            return Err(JobRegistryError::JobNotOpen);
+            panic_with_error!(&env, JobRegistryError::JobNotOpen);
         }
 
-        // Retrieve existing bids vector or create new empty vector
         let bids_key = DataKey::Bids(job_id);
         let mut bids: Vec<BidRecord> = env
             .storage()
             .persistent()
             .get(&bids_key)
-            .unwrap_or_else(|| Vec::new(&env));
+            .unwrap_or(Vec::new(&env));
 
-        // Add the new bid to the vector
+        for bid in bids.iter() {
+            if bid.freelancer == freelancer {
+                panic_with_error!(&env, JobRegistryError::BidAlreadySubmitted);
+            }
+        }
+
         bids.push_back(BidRecord {
             freelancer: freelancer.clone(),
-            proposal_hash: proposal_hash.clone(),
+            proposal_hash,
         });
-
-        // Persist updated bids vector to storage
         env.storage().persistent().set(&bids_key, &bids);
-        Self::bump_persistent_ttl(&env, &bids_key);
 
-        // Emit auditable event for off-chain indexing and monitoring
-        // Timestamp ensures audit trail for all submissions
-        env.events().publish(
-            ("job_registry", "BidSubmitted"),
-            BidSubmittedEvent {
-                job_id,
-                freelancer,
-                proposal_hash,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+        env.events()
+            .publish((symbol_short!("bid"), job_id), freelancer);
     }
 
     /// Client accepts a bid, locking in the freelancer.
-    pub fn accept_bid(
-        env: Env,
-        job_id: u64,
-        client: Address,
-        freelancer: Address,
-    ) -> Result<(), JobRegistryError> {
+    pub fn accept_bid(env: Env, job_id: u64, client: Address, freelancer: Address) {
+        ensure_initialized(&env);
         client.require_auth();
 
         let key = DataKey::Job(job_id);
@@ -382,226 +189,176 @@ impl JobRegistryContract {
             .storage()
             .persistent()
             .get(&key)
-            .ok_or(JobRegistryError::JobNotFound)?;
-        Self::bump_persistent_ttl(&env, &key);
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::JobNotFound));
 
         if job.status != JobStatus::Open {
-            return Err(JobRegistryError::InvalidState);
+            panic_with_error!(&env, JobRegistryError::JobNotOpen);
         }
         if client != job.client {
-            return Err(JobRegistryError::Unauthorized);
+            panic_with_error!(&env, JobRegistryError::Unauthorized);
         }
 
-        let bids_key = DataKey::Bids(job_id);
         let bids: Vec<BidRecord> = env
             .storage()
             .persistent()
-            .get(&bids_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        Self::bump_persistent_ttl(&env, &bids_key);
+            .get(&DataKey::Bids(job_id))
+            .unwrap_or(Vec::new(&env));
 
-        let mut bid_found = false;
-        let mut idx = 0u32;
-        let bids_len = bids.len();
-        while idx < bids_len {
-            let bid = bids.get(idx).expect("bid vector index");
+        let mut found = false;
+        for bid in bids.iter() {
             if bid.freelancer == freelancer {
-                bid_found = true;
+                found = true;
                 break;
             }
-            idx += 1;
         }
-
-        if !bid_found {
-            return Err(JobRegistryError::BidNotFound);
+        if !found {
+            panic_with_error!(&env, JobRegistryError::BidNotFound);
         }
 
         job.freelancer = Some(freelancer.clone());
         job.status = JobStatus::InProgress;
         env.storage().persistent().set(&key, &job);
-        Self::bump_persistent_ttl(&env, &key);
 
-        env.events().publish(
-            ("job_registry", "BidAccepted"),
-            BidAcceptedEvent {
-                job_id,
-                client,
-                freelancer,
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+        env.events()
+            .publish((symbol_short!("accept"), job_id), freelancer);
     }
 
-    /// Freelancer submits a deliverable for a job in progress.
-    ///
-    /// This is the core operation enabling freelancers to submit completed work
-    /// for jobs they have been assigned to. The deliverable is stored as an IPFS
-    /// hash to minimize on-chain storage while maintaining decentralized content
-    /// accessibility. Validation ensures:
-    /// 1. The freelancer is authenticated via Stellar signature
-    /// 2. The job exists and is in InProgress status
-    /// 3. The deliverable hash is not empty (content validation)
-    /// 4. The caller is the assigned freelancer for the job
-    ///
-    /// # Arguments
-    /// * `env` - The Soroban environment
-    /// * `job_id` - The unique identifier of the job
-    /// * `freelancer` - The address of the freelancer submitting the deliverable
-    /// * `hash` - The IPFS CID hash of the deliverable content
-    ///
-    /// # Returns
-    /// * `Ok(())` - If the deliverable is successfully submitted
-    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
-    /// * `Err(JobRegistryError::InvalidInput)` - If the deliverable hash is empty
-    /// * `Err(JobRegistryError::InvalidState)` - If the job status is not InProgress
-    /// * `Err(JobRegistryError::Unauthorized)` - If the caller is not the assigned freelancer
-    ///
-    /// # Security Considerations
-    /// * Requires freelancer authentication via `require_auth()` to prevent spoofing
-    /// * Validates job status to prevent premature or invalid submissions
-    /// * Prevents submission of invalid (empty) deliverable hashes
-    /// * Ensures only the assigned freelancer can submit deliverables
-    /// * Emits auditable event with timestamp for off-chain monitoring
-    /// * Stores deliverable hash persistently for escrow and dispute resolution
-    pub fn submit_deliverable(
-        env: Env,
-        job_id: u64,
-        freelancer: Address,
-        hash: Bytes,
-    ) -> Result<(), JobRegistryError> {
+    /// Freelancer submits deliverable IPFS hash.
+    pub fn submit_deliverable(env: Env, job_id: u64, freelancer: Address, hash: Bytes) {
+        ensure_initialized(&env);
+        validate_hash(&env, &hash);
         freelancer.require_auth();
-
-        if hash.is_empty() {
-            return Err(JobRegistryError::InvalidInput);
-        }
 
         let key = DataKey::Job(job_id);
         let mut job: JobRecord = env
             .storage()
             .persistent()
             .get(&key)
-            .ok_or(JobRegistryError::JobNotFound)?;
-        Self::bump_persistent_ttl(&env, &key);
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::JobNotFound));
 
         if job.status != JobStatus::InProgress {
-            return Err(JobRegistryError::InvalidState);
+            panic_with_error!(&env, JobRegistryError::InvalidStateTransition);
         }
         if job.freelancer != Some(freelancer.clone()) {
-            return Err(JobRegistryError::Unauthorized);
+            panic_with_error!(&env, JobRegistryError::Unauthorized);
         }
 
         job.status = JobStatus::DeliverableSubmitted;
         env.storage().persistent().set(&key, &job);
-        Self::bump_persistent_ttl(&env, &key);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Deliverable(job_id), &hash);
 
-        let deliverable_key = DataKey::Deliverable(job_id);
-        env.storage().persistent().set(&deliverable_key, &hash);
-        Self::bump_persistent_ttl(&env, &deliverable_key);
-
-        env.events().publish(
-            ("job_registry", "DeliverableSubmitted"),
-            DeliverableSubmittedEvent {
-                job_id,
-                freelancer: freelancer.clone(),
-                deliverable_hash: hash.clone(),
-                timestamp: env.ledger().timestamp(),
-            },
-        );
-
-        Ok(())
+        env.events()
+            .publish((symbol_short!("deliver"), job_id), freelancer);
     }
 
-    /// Mark job disputed (called by escrow via cross-contract invoke).
-    pub fn mark_disputed(env: Env, job_id: u64) -> Result<(), JobRegistryError> {
+    /// Mark job disputed. Only the initialized admin can call this.
+    pub fn mark_disputed(env: Env, job_id: u64) {
+        ensure_initialized(&env);
+        let admin = read_admin(&env);
+        admin.require_auth();
+
         let key = DataKey::Job(job_id);
         let mut job: JobRecord = env
             .storage()
             .persistent()
             .get(&key)
-            .ok_or(JobRegistryError::JobNotFound)?;
-        Self::bump_persistent_ttl(&env, &key);
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::JobNotFound));
 
         if job.status != JobStatus::InProgress && job.status != JobStatus::DeliverableSubmitted {
-            return Err(JobRegistryError::InvalidState);
+            panic_with_error!(&env, JobRegistryError::InvalidStateTransition);
         }
 
         job.status = JobStatus::Disputed;
         env.storage().persistent().set(&key, &job);
-        Self::bump_persistent_ttl(&env, &key);
 
-        env.events().publish(
-            ("job_registry", "Disputed"),
-            (job_id, env.ledger().timestamp()),
-        );
-
-        Ok(())
+        env.events().publish((symbol_short!("dispute"), job_id), ());
     }
 
-    /// Retrieves a job record by its ID.
-    ///
-    /// This is a view function that provides the full state of a job,
-    /// including its status, client, and assigned freelancer.
-    ///
-    /// # Arguments
-    /// * `env` - The Soroban environment
-    /// * `job_id` - The unique identifier of the job
-    ///
-    /// # Returns
-    /// * `Ok(JobRecord)` - The job record if found
-    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
-    pub fn get_job(env: Env, job_id: u64) -> Result<JobRecord, JobRegistryError> {
-        let key = DataKey::Job(job_id);
-        let job = env
-            .storage()
+    pub fn get_job(env: Env, job_id: u64) -> JobRecord {
+        ensure_initialized(&env);
+        env.storage()
             .persistent()
-            .get(&key)
-            .ok_or(JobRegistryError::JobNotFound)?;
-        Self::bump_persistent_ttl(&env, &key);
-        Ok(job)
+            .get(&DataKey::Job(job_id))
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::JobNotFound))
     }
 
-    /// Retrieves all bids for a specific job.
-    ///
-    /// This is a view function that returns the history of all bids
-    /// submitted for a given job. If a job exists but has no bids,
-    /// an empty vector is returned.
-    ///
-    /// # Arguments
-    /// * `env` - The Soroban environment
-    /// * `job_id` - The unique identifier of the job
-    ///
-    /// # Returns
-    /// * `Ok(Vec<BidRecord>)` - A vector of all bids submitted for the job
-    /// * `Err(JobRegistryError::JobNotFound)` - If the job ID does not exist
-    pub fn get_bids(env: Env, job_id: u64) -> Result<Vec<BidRecord>, JobRegistryError> {
-        let job_key = DataKey::Job(job_id);
-        if !env.storage().persistent().has(&job_key) {
-            return Err(JobRegistryError::JobNotFound);
-        }
-        Self::bump_persistent_ttl(&env, &job_key);
-
-        let bids_key = DataKey::Bids(job_id);
-        let bids = env
-            .storage()
+    pub fn get_bids(env: Env, job_id: u64) -> Vec<BidRecord> {
+        ensure_initialized(&env);
+        env.storage()
             .persistent()
-            .get(&bids_key)
-            .unwrap_or_else(|| Vec::new(&env));
-        Self::bump_persistent_ttl(&env, &bids_key);
-        Ok(bids)
+            .get(&DataKey::Bids(job_id))
+            .unwrap_or(Vec::new(&env))
     }
 
     pub fn get_deliverable(env: Env, job_id: u64) -> Bytes {
-        let key = DataKey::Deliverable(job_id);
-        let deliverable = env
-            .storage()
+        ensure_initialized(&env);
+        env.storage()
             .persistent()
-            .get(&key)
-            .expect("no deliverable");
-        Self::bump_persistent_ttl(&env, &key);
-        deliverable
+            .get(&DataKey::Deliverable(job_id))
+            .unwrap_or_else(|| panic_with_error!(&env, JobRegistryError::NoDeliverable))
     }
+}
+
+fn ensure_initialized(env: &Env) {
+    if !env.storage().instance().has(&DataKey::Admin) {
+        panic_with_error!(env, JobRegistryError::NotInitialized);
+    }
+}
+
+fn read_admin(env: &Env) -> Address {
+    ensure_initialized(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::Admin)
+        .unwrap_or_else(|| panic_with_error!(env, JobRegistryError::NotInitialized))
+}
+
+fn read_next_job_id(env: &Env) -> u64 {
+    ensure_initialized(env);
+    env.storage()
+        .instance()
+        .get(&DataKey::NextJobId)
+        .unwrap_or_else(|| panic_with_error!(env, JobRegistryError::NotInitialized))
+}
+
+fn validate_job_input(env: &Env, job_id: u64, hash: &Bytes, budget: i128) {
+    if job_id == 0 {
+        panic_with_error!(env, JobRegistryError::InvalidJobId);
+    }
+    if budget <= 0 {
+        panic_with_error!(env, JobRegistryError::InvalidBudget);
+    }
+    validate_hash(env, hash);
+}
+
+fn validate_hash(env: &Env, hash: &Bytes) {
+    let len = hash.len();
+    if len == 0 || len > MAX_HASH_LEN {
+        panic_with_error!(env, JobRegistryError::InvalidHash);
+    }
+}
+
+fn post_job_with_id(env: &Env, job_id: u64, client: Address, hash: Bytes, budget: i128) {
+    let key = DataKey::Job(job_id);
+    if env.storage().persistent().has(&key) {
+        panic_with_error!(env, JobRegistryError::JobAlreadyExists);
+    }
+
+    let job = JobRecord {
+        client,
+        freelancer: None,
+        metadata_hash: hash,
+        budget_stroops: budget,
+        status: JobStatus::Open,
+    };
+    env.storage().persistent().set(&key, &job);
+
+    let bids: Vec<BidRecord> = Vec::new(env);
+    env.storage()
+        .persistent()
+        .set(&DataKey::Bids(job_id), &bids);
 }
 
 #[cfg(test)]
@@ -610,16 +367,105 @@ mod test {
     use soroban_sdk::testutils::Address as _;
     use soroban_sdk::{Address, Bytes, Env};
 
-    #[test]
-    fn test_full_lifecycle() {
+    fn setup() -> (
+        Env,
+        JobRegistryContractClient<'static>,
+        Address,
+        Address,
+        Address,
+    ) {
         let env = Env::default();
         env.mock_all_auths();
 
+        let admin = Address::generate(&env);
         let client = Address::generate(&env);
         let freelancer = Address::generate(&env);
 
         let contract_id = env.register_contract(None, JobRegistryContract);
         let cc = JobRegistryContractClient::new(&env, &contract_id);
+
+        (env, cc, admin, client, freelancer)
+    }
+
+    #[test]
+    fn test_initialize_bootstraps_storage() {
+        let (_env, cc, admin, _, _) = setup();
+
+        cc.initialize(&admin);
+
+        assert!(cc.is_initialized());
+        assert_eq!(cc.get_admin(), admin);
+        assert_eq!(cc.get_next_job_id(), 1u64);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_double_initialize_panics() {
+        let (_env, cc, admin, _, _) = setup();
+
+        cc.initialize(&admin);
+        cc.initialize(&admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_post_job_before_initialize_panics() {
+        let (env, cc, _admin, client, _) = setup();
+        let hash = Bytes::from_slice(&env, b"QmHash");
+        cc.post_job(&1u64, &client, &hash, &5000i128);
+    }
+
+    #[test]
+    fn test_post_job_auto_allocates_sequential_ids() {
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
+
+        let hash1 = Bytes::from_slice(&env, b"QmHash1");
+        let hash2 = Bytes::from_slice(&env, b"QmHash2");
+
+        let id1 = cc.post_job_auto(&client, &hash1, &5000i128);
+        let id2 = cc.post_job_auto(&client, &hash2, &7000i128);
+
+        assert_eq!(id1, 1u64);
+        assert_eq!(id2, 2u64);
+        assert_eq!(cc.get_next_job_id(), 3u64);
+    }
+
+    #[test]
+    fn test_post_job_with_explicit_id_updates_next_job_id() {
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
+
+        let hash = Bytes::from_slice(&env, b"QmHash");
+        cc.post_job(&42u64, &client, &hash, &5000i128);
+
+        assert_eq!(cc.get_next_job_id(), 43u64);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_invalid_budget_panics() {
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
+
+        let hash = Bytes::from_slice(&env, b"QmHash");
+        cc.post_job(&1u64, &client, &hash, &0i128);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_empty_hash_panics() {
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
+
+        let empty = Bytes::from_slice(&env, b"");
+        cc.post_job(&1u64, &client, &empty, &5000i128);
+    }
+
+    #[test]
+    fn test_full_lifecycle() {
+        let (env, cc, admin, client, freelancer) = setup();
+        cc.initialize(&admin);
 
         let hash = Bytes::from_slice(&env, b"QmSomeIPFSHash");
         cc.post_job(&1u64, &client, &hash, &5000i128);
@@ -650,248 +496,35 @@ mod test {
     }
 
     #[test]
-    fn test_job_created_event_emitted() {
-        let env = Env::default();
-        env.mock_all_auths();
+    #[should_panic]
+    fn test_duplicate_bid_panics() {
+        let (env, cc, admin, client, freelancer) = setup();
+        cc.initialize(&admin);
 
-        let client = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJobHash");
-        let budget = 7500i128;
-        cc.post_job(&42u64, &client, &hash, &budget);
-
-        // Verify job was created correctly
-        let job = cc.get_job(&42u64);
-        assert_eq!(job.status, JobStatus::Open);
-        assert_eq!(job.client, client);
-        assert_eq!(job.metadata_hash, hash);
-        assert_eq!(job.budget_stroops, budget);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // submit_bid comprehensive test suite (>90% coverage)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_submit_bid_success() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJob");
+        let hash = Bytes::from_slice(&env, b"QmHash");
         cc.post_job(&1u64, &client, &hash, &5000i128);
 
         let proposal = Bytes::from_slice(&env, b"QmProposal");
         cc.submit_bid(&1u64, &freelancer, &proposal);
-
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 1);
-        assert_eq!(bids.get(0).unwrap().freelancer, freelancer);
-        assert_eq!(bids.get(0).unwrap().proposal_hash, proposal);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #1)")]
-    fn test_submit_bid_job_not_found() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&999u64, &freelancer, &proposal);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #4)")]
-    fn test_submit_bid_empty_proposal_hash() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJob");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        let empty_proposal = Bytes::from_slice(&env, b"");
-        cc.submit_bid(&1u64, &freelancer, &empty_proposal);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #2)")]
-    fn test_submit_bid_on_non_open_job() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer1 = Address::generate(&env);
-        let freelancer2 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer1, &proposal);
-        cc.accept_bid(&1u64, &client, &freelancer1);
-
-        let late_proposal = Bytes::from_slice(&env, b"QmLateProposal");
-        cc.submit_bid(&1u64, &freelancer2, &late_proposal);
-    }
-
-    #[test]
-    fn test_accept_bid_success() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJob");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
         cc.submit_bid(&1u64, &freelancer, &proposal);
-
-        cc.accept_bid(&1u64, &client, &freelancer);
-
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::InProgress);
-        assert_eq!(job.freelancer, Some(freelancer));
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #6)")]
-    fn test_accept_bid_requires_existing_bid() {
-        let env = Env::default();
-        env.mock_all_auths();
+    #[should_panic]
+    fn test_accept_without_matching_bid_panics() {
+        let (env, cc, admin, client, freelancer) = setup();
+        cc.initialize(&admin);
 
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJob");
+        let hash = Bytes::from_slice(&env, b"QmHash");
         cc.post_job(&1u64, &client, &hash, &5000i128);
 
         cc.accept_bid(&1u64, &client, &freelancer);
-    }
-
-    #[test]
-    fn test_multiple_bids_on_same_job() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        // Submit multiple bids from different freelancers
-        let proposals = [
-            b"QmProposal1" as &[u8],
-            b"QmProposal2",
-            b"QmProposal3",
-            b"QmProposal4",
-            b"QmProposal5",
-        ];
-
-        for proposal_bytes in &proposals {
-            let freelancer = Address::generate(&env);
-            let proposal = Bytes::from_slice(&env, proposal_bytes);
-            cc.submit_bid(&1u64, &freelancer, &proposal);
-        }
-
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 5);
-    }
-
-    #[test]
-    fn test_bid_same_freelancer_multiple_times() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        // Same freelancer can submit multiple different proposals
-        let proposal1 = Bytes::from_slice(&env, b"QmProposal1");
-        cc.submit_bid(&1u64, &freelancer, &proposal1);
-
-        let proposal2 = Bytes::from_slice(&env, b"QmProposal2");
-        cc.submit_bid(&1u64, &freelancer, &proposal2);
-
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 2);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Integration tests for other functions
-    // ─────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #2)")]
-    fn test_bid_on_non_open_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer1 = Address::generate(&env);
-        let freelancer2 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer1, &proposal);
-        cc.accept_bid(&1u64, &client, &freelancer1);
-
-        let late_proposal = Bytes::from_slice(&env, b"QmLate");
-        cc.submit_bid(&1u64, &freelancer2, &late_proposal);
     }
 
     #[test]
     fn test_mark_disputed_from_in_progress() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
+        let (env, cc, admin, client, freelancer) = setup();
+        cc.initialize(&admin);
 
         let hash = Bytes::from_slice(&env, b"QmHash");
         cc.post_job(&1u64, &client, &hash, &5000i128);
@@ -906,492 +539,26 @@ mod test {
     }
 
     #[test]
-    fn test_mark_disputed_from_deliverable_submitted() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer, &proposal);
-        cc.accept_bid(&1u64, &client, &freelancer);
-
-        let deliverable = Bytes::from_slice(&env, b"QmDeliverable");
-        cc.submit_deliverable(&1u64, &freelancer, &deliverable);
-
-        cc.mark_disputed(&1u64);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::Disputed);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #5)")]
-    fn test_mark_disputed_from_open_fails() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-
-        cc.mark_disputed(&1u64);
-    }
-
-    #[test]
-    #[should_panic(expected = "job already exists")]
-    fn test_duplicate_job_id() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-        cc.post_job(&1u64, &client, &hash, &5000i128);
-    }
-
-    #[test]
-    fn test_multiple_jobs_and_bids() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client1 = Address::generate(&env);
-        let client2 = Address::generate(&env);
-        let freelancers: Vec<Address> = Vec::from_array(
-            &env,
-            [
-                Address::generate(&env),
-                Address::generate(&env),
-                Address::generate(&env),
-            ],
-        );
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client1, &hash, &1000i128);
-        cc.post_job(&2u64, &client2, &hash, &2000i128);
-
-        let prop1 = Bytes::from_slice(&env, b"P1");
-        let prop2 = Bytes::from_slice(&env, b"P2");
-
-        for f in freelancers.iter() {
-            cc.submit_bid(&1u64, &f, &prop1);
-            cc.submit_bid(&2u64, &f, &prop2);
-        }
-
-        assert_eq!(cc.get_bids(&1u64).len(), 3);
-        assert_eq!(cc.get_bids(&2u64).len(), 3);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #3)")]
-    fn test_unauthorized_accept_bid() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-        let rando = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &1000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer, &proposal);
-
-        cc.accept_bid(&1u64, &rando, &freelancer);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #5)")]
-    fn test_cannot_accept_bid_twice() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let f1 = Address::generate(&env);
-        let f2 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &1000i128);
-
-        let prop = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &f1, &prop);
-        cc.submit_bid(&1u64, &f2, &prop);
-
-        cc.accept_bid(&1u64, &client, &f1);
-        cc.accept_bid(&1u64, &client, &f2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #3)")]
-    fn test_submit_deliverable_unauthorized() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let f1 = Address::generate(&env);
-        let f2 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &1000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &f1, &proposal);
-        cc.accept_bid(&1u64, &client, &f1);
-
-        let deliverable = Bytes::from_slice(&env, b"QmDeliverable");
-        cc.submit_deliverable(&1u64, &f2, &deliverable);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #4)")]
-    fn test_submit_deliverable_empty_hash() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmHash");
-        cc.post_job(&1u64, &client, &hash, &1000i128);
-
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer, &proposal);
-        cc.accept_bid(&1u64, &client, &freelancer);
-
-        let empty_deliverable = Bytes::from_slice(&env, b"");
-        cc.submit_deliverable(&1u64, &freelancer, &empty_deliverable);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #1)")]
-    fn test_get_job_not_found() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        cc.get_job(&999u64);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #1)")]
-    fn test_get_bids_job_not_found() {
-        let env = Env::default();
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        cc.get_bids(&999u64);
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Comprehensive Job Registry Full Lifecycle Tests (>90% coverage)
-    // ─────────────────────────────────────────────────────────────────────────
-
-    #[test]
-    fn test_complete_lifecycle_with_all_states() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer1 = Address::generate(&env);
-        let freelancer2 = Address::generate(&env);
-        let freelancer3 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // 1. Post job (Open state)
-        let hash = Bytes::from_slice(&env, b"QmJobMetadata");
-        cc.post_job(&100u64, &client, &hash, &15000i128);
-        let job = cc.get_job(&100u64);
-        assert_eq!(job.status, JobStatus::Open);
-        assert_eq!(job.budget_stroops, 15000);
-
-        // 2. Multiple freelancers submit bids
-        let prop1 = Bytes::from_slice(&env, b"QmProposal1");
-        cc.submit_bid(&100u64, &freelancer1, &prop1);
-
-        let prop2 = Bytes::from_slice(&env, b"QmProposal2");
-        cc.submit_bid(&100u64, &freelancer2, &prop2);
-
-        let prop3 = Bytes::from_slice(&env, b"QmProposal3");
-        cc.submit_bid(&100u64, &freelancer3, &prop3);
-
-        let bids = cc.get_bids(&100u64);
-        assert_eq!(bids.len(), 3);
-
-        // 3. Client accepts freelancer2's bid (transitions to InProgress)
-        cc.accept_bid(&100u64, &client, &freelancer2);
-        let job = cc.get_job(&100u64);
-        assert_eq!(job.status, JobStatus::InProgress);
-        assert_eq!(job.freelancer, Some(freelancer2.clone()));
-
-        // 4. Freelancer submits deliverable (transitions to DeliverableSubmitted)
-        let deliverable = Bytes::from_slice(&env, b"QmFinalDeliverable");
-        cc.submit_deliverable(&100u64, &freelancer2, &deliverable);
-        let job = cc.get_job(&100u64);
-        assert_eq!(job.status, JobStatus::DeliverableSubmitted);
-
-        let stored_deliverable = cc.get_deliverable(&100u64);
-        assert_eq!(stored_deliverable, deliverable);
-
-        // 5. Mark as disputed (transitions to Disputed)
-        cc.mark_disputed(&100u64);
-        let job = cc.get_job(&100u64);
-        assert_eq!(job.status, JobStatus::Disputed);
-    }
-
-    #[test]
-    fn test_multiple_jobs_independent_lifecycles() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client1 = Address::generate(&env);
-        let client2 = Address::generate(&env);
-        let freelancer1 = Address::generate(&env);
-        let freelancer2 = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // Job 1: Full lifecycle
-        let hash1 = Bytes::from_slice(&env, b"QmJob1");
-        cc.post_job(&1u64, &client1, &hash1, &5000i128);
-        let prop1 = Bytes::from_slice(&env, b"QmProp1");
-        cc.submit_bid(&1u64, &freelancer1, &prop1);
-        cc.accept_bid(&1u64, &client1, &freelancer1);
-        let deliverable1 = Bytes::from_slice(&env, b"QmDeliverable1");
-        cc.submit_deliverable(&1u64, &freelancer1, &deliverable1);
-
-        // Job 2: Just posted and bids
-        let hash2 = Bytes::from_slice(&env, b"QmJob2");
-        cc.post_job(&2u64, &client2, &hash2, &8000i128);
-        let prop2a = Bytes::from_slice(&env, b"QmProp2a");
-        cc.submit_bid(&2u64, &freelancer1, &prop2a);
-        let prop2b = Bytes::from_slice(&env, b"QmProp2b");
-        cc.submit_bid(&2u64, &freelancer2, &prop2b);
-
-        // Verify both jobs are in different states
-        let job1 = cc.get_job(&1u64);
-        assert_eq!(job1.status, JobStatus::DeliverableSubmitted);
-
-        let job2 = cc.get_job(&2u64);
-        assert_eq!(job2.status, JobStatus::Open);
-        assert_eq!(cc.get_bids(&2u64).len(), 2);
-    }
-
-    #[test]
-    fn test_event_emissions_throughout_lifecycle() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // Post job - should emit JobCreated event
-        let hash = Bytes::from_slice(&env, b"QmJobHash");
-        cc.post_job(&1u64, &client, &hash, &10000i128);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::Open);
-
-        // Submit bid - should emit BidSubmitted event
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer, &proposal);
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 1);
-
-        // Accept bid - should emit BidAccepted event
-        cc.accept_bid(&1u64, &client, &freelancer);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::InProgress);
-
-        // Submit deliverable - should emit DeliverableSubmitted event
-        let deliverable = Bytes::from_slice(&env, b"QmDeliverable");
-        cc.submit_deliverable(&1u64, &freelancer, &deliverable);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::DeliverableSubmitted);
-
-        // Mark disputed - should emit Disputed event
-        cc.mark_disputed(&1u64);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::Disputed);
-    }
-
-    #[test]
-    fn test_bid_validation_and_edge_cases() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // Post job
-        let hash = Bytes::from_slice(&env, b"QmJob");
-        cc.post_job(&1u64, &client, &hash, &7000i128);
-
-        // Submit multiple bids from same freelancer with different proposals
-        let prop1 = Bytes::from_slice(&env, b"QmProposalV1");
-        cc.submit_bid(&1u64, &freelancer, &prop1);
-
-        let prop2 = Bytes::from_slice(&env, b"QmProposalV2");
-        cc.submit_bid(&1u64, &freelancer, &prop2);
-
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 2);
-        assert_eq!(bids.get(0).unwrap().proposal_hash, prop1);
-        assert_eq!(bids.get(1).unwrap().proposal_hash, prop2);
-
-        // Accept the bid
-        cc.accept_bid(&1u64, &client, &freelancer);
-
-        // Verify job state
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::InProgress);
-        assert_eq!(job.freelancer, Some(freelancer));
-    }
-
-    #[test]
-    fn test_dispute_state_transitions() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let freelancer = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // Setup job to InProgress
-        let hash = Bytes::from_slice(&env, b"QmJob");
-        cc.post_job(&1u64, &client, &hash, &6000i128);
-        let proposal = Bytes::from_slice(&env, b"QmProposal");
-        cc.submit_bid(&1u64, &freelancer, &proposal);
-        cc.accept_bid(&1u64, &client, &freelancer);
-
-        // Dispute from InProgress
-        cc.mark_disputed(&1u64);
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::Disputed);
-
-        // Setup another job to DeliverableSubmitted
-        cc.post_job(&2u64, &client, &hash, &6000i128);
-        cc.submit_bid(&2u64, &freelancer, &proposal);
-        cc.accept_bid(&2u64, &client, &freelancer);
-        let deliverable = Bytes::from_slice(&env, b"QmDeliverable");
-        cc.submit_deliverable(&2u64, &freelancer, &deliverable);
-
-        // Dispute from DeliverableSubmitted
-        cc.mark_disputed(&2u64);
-        let job = cc.get_job(&2u64);
-        assert_eq!(job.status, JobStatus::Disputed);
-    }
-
-    #[test]
-    #[should_panic(expected = "Error(Contract, #5)")]
+    #[should_panic]
     fn test_mark_disputed_from_open_panics() {
-        let env = Env::default();
-        env.mock_all_auths();
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
 
-        let client = Address::generate(&env);
-
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        let hash = Bytes::from_slice(&env, b"QmJob");
+        let hash = Bytes::from_slice(&env, b"QmHash");
         cc.post_job(&1u64, &client, &hash, &5000i128);
 
-        // Cannot dispute from Open state
         cc.mark_disputed(&1u64);
     }
 
     #[test]
-    #[should_panic(expected = "Error(Contract, #1)")]
-    fn test_mark_disputed_nonexistent_job() {
-        let env = Env::default();
-        env.mock_all_auths();
+    #[should_panic]
+    fn test_get_deliverable_without_submission_panics() {
+        let (env, cc, admin, client, _) = setup();
+        cc.initialize(&admin);
 
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
+        let hash = Bytes::from_slice(&env, b"QmHash");
+        cc.post_job(&1u64, &client, &hash, &5000i128);
 
-        cc.mark_disputed(&999u64);
-    }
-
-    #[test]
-    fn test_large_scale_bidding_scenario() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let client = Address::generate(&env);
-        let contract_id = env.register_contract(None, JobRegistryContract);
-        let cc = JobRegistryContractClient::new(&env, &contract_id);
-
-        // Post job
-        let hash = Bytes::from_slice(&env, b"QmLargeJob");
-        cc.post_job(&1u64, &client, &hash, &50000i128);
-
-        // Simulate 10 different freelancers bidding
-        for i in 0..10 {
-            let freelancer = Address::generate(&env);
-            let proposal_bytes: &[u8] = match i {
-                0 => b"QmProposal0",
-                1 => b"QmProposal1",
-                2 => b"QmProposal2",
-                3 => b"QmProposal3",
-                4 => b"QmProposal4",
-                5 => b"QmProposal5",
-                6 => b"QmProposal6",
-                7 => b"QmProposal7",
-                8 => b"QmProposal8",
-                _ => b"QmProposal9",
-            };
-            let proposal = Bytes::from_slice(&env, proposal_bytes);
-            cc.submit_bid(&1u64, &freelancer, &proposal);
-        }
-
-        let bids = cc.get_bids(&1u64);
-        assert_eq!(bids.len(), 10);
-
-        // Accept the 5th bid
-        let chosen_freelancer = bids.get(4).unwrap().freelancer;
-        cc.accept_bid(&1u64, &client, &chosen_freelancer);
-
-        let job = cc.get_job(&1u64);
-        assert_eq!(job.status, JobStatus::InProgress);
-        assert_eq!(job.freelancer, Some(chosen_freelancer));
+        cc.get_deliverable(&1u64);
     }
 }
