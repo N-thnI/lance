@@ -157,34 +157,32 @@ export async function buildAndSimulateTransaction({
 export async function submitTransaction(
   signedTx: Transaction
 ): Promise<SorobanRpc.Api.SendTransactionResponse> {
-  const response = await sorobanServer.sendTransaction(signedTx);
+  const response = await sorobanServer.sendTransaction(signedTx)
 
-  if (response.status === "ERROR") {
-    let isSeqMismatch = false;
+  if (response.status === 'ERROR') {
+    let isSeqMismatch = false
     try {
       if (response.errorResult) {
-        const result = xdr.TransactionResult.fromXDR(
-          response.errorResult,
-          "base64"
-        );
-        isSeqMismatch = result.result().switch().name === "txBadSeq";
+        // response.errorResult is already an xdr.TransactionResult object in v12+
+        isSeqMismatch =
+          response.errorResult.result().switch().name === 'txBadSeq'
       }
     } catch (_) {
-      // Ignore XDR parsing errors fallback to generic error
+      // Ignore parsing errors fallback to generic error
     }
 
-    if (process.env.NODE_ENV === "development") {
-      console.error("Transaction Submit Error XDR:", response.errorResult);
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Transaction Submit Error:', response.errorResult)
     }
 
     if (isSeqMismatch) {
-      throw new Error("SEQUENCE_MISMATCH");
+      throw new Error('SEQUENCE_MISMATCH')
     }
 
-    throw new Error("Transaction submission failed with network status ERROR.");
+    throw new Error('Transaction submission failed with network status ERROR.')
   }
 
-  return response;
+  return response
 }
 
 export async function pollTransactionStatus(
