@@ -7,12 +7,12 @@ use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 mod db;
 mod error;
+mod indexer;
 mod middleware;
 mod models;
 mod routes;
 mod services;
 mod worker;
-mod indexer;
 
 pub use db::AppState;
 

@@ -12,8 +12,8 @@ pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<Value>) 
             let errors = metrics().total_errors.load(Ordering::Relaxed);
             (
                 StatusCode::OK,
-                Json(json!({ 
-                    "status": "ok", 
+                Json(json!({
+                    "status": "ok",
                     "db": "connected",
                     "indexer_sync_status": {
                         "last_processed_ledger": last_ledger,
@@ -21,7 +21,7 @@ pub async fn health(State(state): State<AppState>) -> (StatusCode, Json<Value>) 
                     }
                 })),
             )
-        },
+        }
         Err(e) => (
             StatusCode::SERVICE_UNAVAILABLE,
             Json(json!({ "status": "degraded", "db": e.to_string() })),
@@ -33,17 +33,16 @@ pub async fn prometheus_metrics() -> String {
     let last_ledger = metrics().last_processed_ledger.load(Ordering::Relaxed);
     let events = metrics().total_events_processed.load(Ordering::Relaxed);
     let errors = metrics().total_errors.load(Ordering::Relaxed);
-    
+
     format!(
         "# HELP indexer_last_processed_ledger The last ledger successfully indexed\n\
          # TYPE indexer_last_processed_ledger gauge\n\
-         indexer_last_processed_ledger {}\n\
+         indexer_last_processed_ledger {last_ledger}\n\
          # HELP indexer_total_events_processed Total number of Soroban events processed\n\
          # TYPE indexer_total_events_processed counter\n\
-         indexer_total_events_processed {}\n\
+         indexer_total_events_processed {events}\n\
          # HELP indexer_total_errors Total number of indexer errors\n\
          # TYPE indexer_total_errors counter\n\
-         indexer_total_errors {}\n",
-        last_ledger, events, errors
+         indexer_total_errors {errors}\n"
     )
 }
