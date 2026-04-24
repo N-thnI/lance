@@ -23,7 +23,7 @@ export function useWallet() {
     try {
       // Verify network compatibility
       const kit = getWalletsKit();
-      const walletNetwork = await kit.getNetwork().catch(() => null);
+      const walletNetwork = kit ? await kit.getNetwork().catch(() => null) : null;
       if (walletNetwork && walletNetwork.network !== APP_STELLAR_NETWORK) {
         toast.warning(`Network mismatch! App is on ${APP_STELLAR_NETWORK}, but wallet is on ${walletNetwork.network}.`);
       }
