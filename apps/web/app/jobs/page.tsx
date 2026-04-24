@@ -1,8 +1,8 @@
 "use client";
 
-import React, { Suspense, useState, useDeferredValue } from "react";
+import React, { useState, useDeferredValue } from "react";
 import { SiteShell } from "@/components/site-shell";
-import { useJobs, BoardJob, JobSort } from "@/hooks/job-queries";
+import { useJobs } from "@/hooks/job-queries";
 import { JobCard } from "@/components/jobs/JobCard";
 import { JobFilters, FilterValues } from "@/components/jobs/JobFilters";
 import { AlertCircle, Loader2 } from "lucide-react";

@@ -9,6 +9,8 @@ vi.mock("../../hooks/job-queries", () => ({
   useJobs: vi.fn(),
 }));
 
+const useJobsMock = vi.mocked(jobQueries.useJobs);
+
 const createTestQueryClient = () => new QueryClient({
   defaultOptions: {
     queries: {
@@ -49,11 +51,11 @@ describe("JobList / JobsPage CI Audit", () => {
   });
 
   it("renders the job list after successful data fetch", async () => {
-    (jobQueries.useJobs as any).mockReturnValue({
+    useJobsMock.mockReturnValue({
       data: mockJobs,
       isLoading: false,
       error: null,
-    });
+    } as unknown as ReturnType<typeof jobQueries.useJobs>);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -70,11 +72,11 @@ describe("JobList / JobsPage CI Audit", () => {
   });
 
   it("shows skeleton state while loading", () => {
-    (jobQueries.useJobs as any).mockReturnValue({
+    useJobsMock.mockReturnValue({
       data: undefined,
       isLoading: true,
       error: null,
-    });
+    } as unknown as ReturnType<typeof jobQueries.useJobs>);
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -89,7 +91,7 @@ describe("JobList / JobsPage CI Audit", () => {
 
   it("triggers Error Boundary on fetch failure", async () => {
     // Simulate a hard error that should bubble up to the ErrorBoundary
-    (jobQueries.useJobs as any).mockImplementation(() => {
+    useJobsMock.mockImplementation(() => {
       throw new Error("Network Disruption");
     });
 
