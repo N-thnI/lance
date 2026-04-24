@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useCallback, useRef, useState } from "react";
 import { useWalletStore } from "@/lib/store/use-wallet-store";
-import { getWalletsKit, APP_STELLAR_NETWORK } from "@/lib/stellar";
+import { getWalletsKit } from "@/lib/stellar";
 import { toast } from "sonner";
 
 export function useWallet() {
@@ -21,12 +21,6 @@ export function useWallet() {
   const connect = useCallback(async (connectedAddress: string) => {
     setStatus("connecting");
     try {
-      // Verify network compatibility
-      const kit = getWalletsKit();
-      const walletNetwork = kit ? await kit.getNetwork().catch(() => null) : null;
-      if (walletNetwork && walletNetwork.network !== APP_STELLAR_NETWORK) {
-        toast.warning(`Network mismatch! App is on ${APP_STELLAR_NETWORK}, but wallet is on ${walletNetwork.network}.`);
-      }
       setConnection(connectedAddress, connectedAddress);
       toast.success("Wallet connected successfully");
       setIsModalOpen(false);
