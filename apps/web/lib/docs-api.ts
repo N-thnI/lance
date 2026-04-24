@@ -20,8 +20,8 @@ export const ApiEndpointSchema = z.object({
   title: z.string(),
   description: z.string(),
   params: z.array(ApiParamSchema).optional(),
-  requestBody: z.record(z.any()).optional(),
-  response: z.record(z.any()).optional(),
+  requestBody: z.record(z.string(), z.any()).optional(),
+  response: z.record(z.string(), z.any()).optional(),
   status: z.enum(["stable", "beta", "deprecated"]).default("stable"),
 });
 
