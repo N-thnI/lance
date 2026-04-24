@@ -39,6 +39,7 @@ export const MOCK_API_DOCS: ApiEndpoint[] = [
     path: "/api/v1/jobs",
     title: "List Jobs",
     description: "Retrieve a paginated list of available jobs on the marketplace.",
+    status: "stable",
     params: [
       { name: "page", type: "number", required: false, description: "Page number for pagination" },
       { name: "status", type: "string", required: false, description: "Filter by job status" },
