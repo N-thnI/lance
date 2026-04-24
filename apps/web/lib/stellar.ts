@@ -1,64 +1,49 @@
-import {
-  StellarWalletsKit,
-  Networks,
-  type ISupportedWallet,
-} from "@creit.tech/stellar-wallets-kit";
+import { StellarWalletsKit, Networks } from "@creit.tech/stellar-wallets-kit";
+import { Horizon, StrKey, Transaction } from "@stellar/stellar-sdk";
+import { categorizeWalletError } from "./wallet-errors";
 
-// TODO: See docs/ISSUES.md — "Wallet Connection"
 let kit: StellarWalletsKit | null = null;
 
-// Selected wallet id is captured from onWalletSelected and re-used for address
-// retrieval / signing. Persisted in sessionStorage so a page refresh does not
-// drop the provider identity while the wallet extension still holds the
-// session.
-const WALLET_ID_STORAGE_KEY = "lance:selected-wallet-id";
+export type StellarNetwork = Networks.TESTNET | Networks.PUBLIC;
+export { Networks };
 
-function readStoredWalletId(): string | null {
-  if (typeof window === "undefined") return null;
-  try {
-    return window.sessionStorage.getItem(WALLET_ID_STORAGE_KEY);
-  } catch {
-    return null;
-  }
+export const APP_STELLAR_NETWORK: StellarNetwork =
+  (process.env.NEXT_PUBLIC_STELLAR_NETWORK as StellarNetwork) ?? Networks.TESTNET;
+
+export function isValidStellarAddress(address: string): boolean {
+  return StrKey.isValidEd25519PublicKey(address);
 }
 
-function writeStoredWalletId(walletId: string | null): void {
-  if (typeof window === "undefined") return;
+export function assertValidStellarAddress(address: string): string {
+  if (!isValidStellarAddress(address)) {
+    throw new Error("Invalid Stellar account address returned by wallet.");
+  }
+  return address;
+}
+
+export function assertValidTransactionXdr(xdr: string): string {
   try {
-    if (walletId) {
-      window.sessionStorage.setItem(WALLET_ID_STORAGE_KEY, walletId);
-    } else {
-      window.sessionStorage.removeItem(WALLET_ID_STORAGE_KEY);
-    }
+    new Transaction(xdr, APP_STELLAR_NETWORK);
+    return xdr;
   } catch {
-    // ignore storage failures (private mode, etc.)
+    throw new Error("Invalid Stellar transaction XDR.");
   }
 }
 
 export function getWalletsKit(): StellarWalletsKit {
+  if (typeof window === "undefined") return null as unknown as StellarWalletsKit;
+
   if (!kit) {
     const storedWalletId = readStoredWalletId();
     kit = new StellarWalletsKit({
-      network:
-        (process.env.NEXT_PUBLIC_STELLAR_NETWORK as Networks) ??
-        Networks.TESTNET,
-      selectedWalletId: storedWalletId ?? "freighter",
+      network: APP_STELLAR_NETWORK,
+      selectedWalletId: "freighter",
+      modules: ["freighter", "albedo", "xbull"],
     });
   }
   return kit;
 }
 
-export interface ConnectedWallet {
-  address: string;
-  walletId: string;
-  walletName: string;
-  walletIcon: string;
-}
-
-/**
- * Opens the wallet-select modal and returns the connected public key.
- * Resolves once the user selects a wallet and the address is retrieved.
- */
 export async function connectWallet(): Promise<string> {
   const wallet = await connectWalletWithInfo();
   return wallet.address;
@@ -86,74 +71,90 @@ export async function connectWalletWithInfo(): Promise<ConnectedWallet> {
           writeStoredWalletId(option.id);
           walletsKit.closeModal();
           const { address } = await walletsKit.getAddress();
-          resolve({
-            address,
-            walletId: option.id,
-            walletName: option.name,
-            walletIcon: option.icon,
-          });
+          resolve(assertValidStellarAddress(address));
         } catch (err) {
-          reject(err);
+          const walletError = categorizeWalletError(err);
+          reject(new Error(walletError.userFriendlyMessage));
         }
       },
-      onClosed: (err) => {
-        if (err) reject(err);
-      },
+      onClosed: () => reject(new Error("Wallet connection cancelled by user.")),
     });
   });
+}
+
+export async function disconnectWallet(): Promise<void> {
+  if (process.env.NEXT_PUBLIC_E2E === "true") return;
+  await getWalletsKit().disconnect();
 }
 
 export async function getConnectedWalletAddress(): Promise<string | null> {
   if (process.env.NEXT_PUBLIC_E2E === "true") return "GD...CLIENT";
   try {
     const { address } = await getWalletsKit().getAddress();
-    return address ?? null;
+    return assertValidStellarAddress(address);
   } catch {
     return null;
   }
 }
 
-/**
- * Returns the id of the wallet provider the user previously selected, if any.
- * Reads from sessionStorage; does not query the extension.
- */
-export function getSelectedWalletId(): string | null {
-  return readStoredWalletId();
-}
+export async function getWalletNetwork(): Promise<StellarNetwork | null> {
+  const walletKit = getWalletsKit() as StellarWalletsKit & {
+    getNetwork?: () => Promise<{ network: string }>;
+  };
 
-/**
- * Looks up metadata (display name, icon) for the given wallet id from the
- * kit's supported-wallets list. Returns null if the kit does not know it.
- */
-export async function getWalletInfo(
-  walletId: string,
-): Promise<ISupportedWallet | null> {
+  if (!walletKit.getNetwork) {
+    return null;
+  }
+
   try {
-    const wallets = await getWalletsKit().getSupportedWallets();
-    return wallets.find((w) => w.id === walletId) ?? null;
+    const result = await walletKit.getNetwork();
+    const network = result.network;
+    if (network === Networks.TESTNET || network === Networks.PUBLIC) {
+      return network;
+    }
+    return null;
   } catch {
     return null;
   }
 }
 
-/**
- * Clears the locally remembered provider selection.
- */
-export function clearSelectedWallet(): void {
-  writeStoredWalletId(null);
-}
-
-/**
- * Signs an XDR transaction string via the connected wallet.
- * Returns the signed XDR string ready for submission to the Soroban RPC.
- */
 export async function signTransaction(xdr: string): Promise<string> {
   if (process.env.NEXT_PUBLIC_E2E === "true") return xdr;
+
   const walletsKit = getWalletsKit();
-  const networkPassphrase =
-    (process.env.NEXT_PUBLIC_STELLAR_NETWORK as Networks) ?? Networks.TESTNET;
-  const { signedTxXdr } = await walletsKit.signTransaction(xdr, {
-    networkPassphrase,
-  });
-  return signedTxXdr;
+  const validatedXdr = assertValidTransactionXdr(xdr);
+
+  try {
+    const { signedTxXdr } = await walletsKit.signTransaction(validatedXdr, {
+      networkPassphrase: APP_STELLAR_NETWORK,
+    });
+    return assertValidTransactionXdr(signedTxXdr);
+  } catch (err) {
+    const walletError = categorizeWalletError(err);
+    throw new Error(walletError.userFriendlyMessage);
+  }
+}
+
+function getHorizonUrl(network: StellarNetwork): string {
+  return network === Networks.PUBLIC
+    ? "https://horizon.stellar.org"
+    : "https://horizon-testnet.stellar.org";
+}
+
+export async function getXlmBalance(address: string): Promise<string | null> {
+  if (process.env.NEXT_PUBLIC_E2E === "true") return "1000.0000000";
+
+  const validatedAddress = assertValidStellarAddress(address);
+  const server = new Horizon.Server(getHorizonUrl(APP_STELLAR_NETWORK));
+
+  try {
+    const account = await server.loadAccount(validatedAddress);
+    const nativeBalance = account.balances.find(
+      (balance): balance is Horizon.HorizonApi.BalanceLineNative =>
+        balance.asset_type === "native",
+    );
+    return nativeBalance?.balance ?? null;
+  } catch {
+    return null;
+  }
 }

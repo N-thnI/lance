@@ -1,5 +1,5 @@
 // Ambient module declaration for @creit.tech/stellar-wallets-kit v2.
-// Required because v2's package.json is missing a `"types"` field.
+// Required because v2's package.json is missing a `types` field.
 
 declare module "@creit.tech/stellar-wallets-kit" {
   export enum Networks {
@@ -28,19 +28,27 @@ declare module "@creit.tech/stellar-wallets-kit" {
   export interface StellarWalletsKitOptions {
     network: Networks;
     selectedWalletId?: string;
+    modules?: Array<"freighter" | "albedo" | "xbull">;
+    [key: string]: unknown;
+  }
+
+  export interface WalletModalOptions {
+    onWalletSelected?: () => void | Promise<void>;
+    onClosed?: () => void;
     [key: string]: unknown;
   }
 
   export class StellarWalletsKit {
     constructor(options: StellarWalletsKitOptions);
-    openModal(options?: OpenModalOptions): void;
+    openModal(options?: WalletModalOptions): void;
     closeModal(): void;
     setWallet(walletId: string): void;
     getSupportedWallets(): Promise<ISupportedWallet[]>;
     getAddress(): Promise<{ address: string }>;
+    getNetwork?(): Promise<{ network: string }>;
     signTransaction(
       xdr: string,
-      options?: Record<string, unknown>,
+      options?: { networkPassphrase?: string; [key: string]: unknown },
     ): Promise<{ signedTxXdr: string }>;
     disconnect(): Promise<void>;
   }
