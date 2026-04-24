@@ -53,15 +53,16 @@ const WALLET_OPTIONS: WalletOption[] = [
 interface WalletSelectionModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSelect: (id: any) => void;
+  onSelect: (id: string) => void;
 }
 
 export function WalletSelectionModal({ isOpen, onClose, onSelect }: WalletSelectionModalProps) {
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setMounted(true);
-    
+    // Defer setMounted to avoid synchronous setState in effect
+    const timer = setTimeout(() => setMounted(true), 0);
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -74,6 +75,7 @@ export function WalletSelectionModal({ isOpen, onClose, onSelect }: WalletSelect
     }
 
     return () => {
+      clearTimeout(timer);
       document.body.style.overflow = "unset";
       window.removeEventListener("keydown", handleKeyDown);
     };

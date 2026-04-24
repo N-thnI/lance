@@ -1,5 +1,4 @@
 "use client";
-
 import { useEffect, useCallback, useRef, useState } from "react";
 import { useWalletStore } from "@/lib/store/use-wallet-store";
 import { getWalletsKit, APP_STELLAR_NETWORK } from "@/lib/stellar";
@@ -19,25 +18,20 @@ export function useWallet() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const isInitialized = useRef(false);
 
-  const connect = useCallback(async (id: any) => {
+  const connect = useCallback(async (connectedAddress: string) => {
     setStatus("connecting");
-    const kit = getWalletsKit();
-    
     try {
-      kit.setWallet(id);
-      const { address: connectedAddress } = await kit.getAddress();
-      
       // Verify network compatibility
+      const kit = getWalletsKit();
       const walletNetwork = await kit.getNetwork().catch(() => null);
       if (walletNetwork && walletNetwork.network !== APP_STELLAR_NETWORK) {
         toast.warning(`Network mismatch! App is on ${APP_STELLAR_NETWORK}, but wallet is on ${walletNetwork.network}.`);
       }
-
-      setConnection(connectedAddress, id);
+      setConnection(connectedAddress, connectedAddress);
       toast.success("Wallet connected successfully");
       setIsModalOpen(false);
-    } catch (err: any) {
-      const message = err.message || "Failed to connect wallet";
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Failed to connect wallet";
       setError(message);
       toast.error(message);
       throw err;
@@ -49,18 +43,16 @@ export function useWallet() {
     toast.info("Wallet disconnected");
   }, [disconnect]);
 
-  // Auto-connect and Listeners
+  // Auto-connect
   useEffect(() => {
     if (isInitialized.current) return;
-    
-    const kit = getWalletsKit();
 
     const attemptAutoConnect = async () => {
       if (address && walletId) {
         try {
-          kit.setWallet(walletId as any);
+          const kit = getWalletsKit();
           const { address: currentAddress } = await kit.getAddress();
-          
+
           if (currentAddress === address) {
             setStatus("connected");
           } else {
@@ -75,24 +67,6 @@ export function useWallet() {
     };
 
     attemptAutoConnect();
-
-    // Re-register listeners for account and network changes
-    if (kit) {
-      kit.onAccountChange((newAddress) => {
-        if (newAddress) {
-          setConnection(newAddress, walletId || "freighter");
-          toast.info("Account switched in wallet");
-        } else {
-          disconnect();
-        }
-      });
-
-      kit.onNetworkChange((newNetwork) => {
-        if (newNetwork !== APP_STELLAR_NETWORK) {
-          toast.warning(`Network mismatch detected: ${newNetwork}`);
-        }
-      });
-    }
   }, [address, walletId, setConnection, setStatus, disconnect]);
 
   return {
