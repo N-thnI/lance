@@ -9,9 +9,9 @@ import { JobSort } from "@/hooks/job-queries";
  * Zod schema for filtering and sorting inputs.
  */
 export const FilterSchema = z.object({
-  query: z.string().max(100).optional(),
-  sortBy: z.enum(["budget", "chronological", "reputation"]),
-  activeTag: z.string(),
+  query: z.string().max(100).nullish().transform((val) => val ?? ""),
+  sortBy: z.enum(["budget", "chronological", "reputation"]).default("chronological"),
+  activeTag: z.string().default("all"),
 });
 
 export type FilterValues = z.infer<typeof FilterSchema>;

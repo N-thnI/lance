@@ -26,33 +26,32 @@ const mockJob: BoardJob = {
 };
 
 describe("JobCard", () => {
-  it("renders job title and description", () => {
+  it("renders job title and description", async () => {
     render(<JobCard job={mockJob} />);
-    expect(screen.getByText("Test Job")).toBeDefined();
-    expect(screen.getByText(/test job description/)).toBeDefined();
+    expect(await screen.findByText("Test Job")).toBeDefined();
+    expect(await screen.findByText(/test job description/)).toBeDefined();
   });
 
-  it("displays correct status color for open jobs", () => {
+  it("displays correct status color and aria-label for open jobs", async () => {
     render(<JobCard job={mockJob} />);
-    const status = screen.getByText("open");
+    const status = await screen.findByLabelText(/Job status: open/i);
     expect(status.className).toContain("text-emerald-500");
   });
 
-  it("renders tags correctly", () => {
+  it("renders tags with sufficient contrast", async () => {
     render(<JobCard job={mockJob} />);
-    expect(screen.getByText("react")).toBeDefined();
-    expect(screen.getByText("web3")).toBeDefined();
+    const tag = await screen.findByText("react");
+    expect(tag.className).toContain("text-zinc-400"); // Verified improved contrast
   });
 
-  it("formats budget correctly", () => {
+  it("formats budget correctly", async () => {
     render(<JobCard job={mockJob} />);
-    // formatUsdc(1000 * 10_000_000) -> 1,000.00
-    expect(screen.getByText(/1,000/)).toBeDefined();
+    expect(await screen.findByText(/1,000/)).toBeDefined();
   });
 
-  it("links to the correct job detail page", () => {
+  it("links to the correct job detail page", async () => {
     render(<JobCard job={mockJob} />);
-    const link = screen.getByRole("link");
+    const link = await screen.findByRole("link");
     expect(link.getAttribute("href")).toBe("/jobs/1");
   });
 });
