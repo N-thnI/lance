@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, Loader2, Wallet, WifiOff, Shield, RefreshCw } from "lucide-react";
+import { AlertTriangle, Loader2, Wallet, WifiOff, Shield } from "lucide-react";
 import { useWalletSession } from "@/hooks/use-wallet-session";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";

@@ -1,8 +1,8 @@
 "use client";
 
-import { AlertTriangle, Info, RefreshCw, Shield, X } from "lucide-react";
+import { AlertTriangle, Info, RefreshCw, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { formatErrorForDisplay, WalletErrorType } from "@/lib/wallet-errors";
+import { WalletErrorType } from "@/lib/wallet-errors";
 import { cn } from "@/lib/utils";
 
 interface WalletErrorDisplayProps {
@@ -28,12 +28,10 @@ export function WalletErrorDisplay({
 
   // Parse error to determine type and recovery steps
   const getErrorInfo = () => {
-    let type: WalletErrorType = WalletErrorType.UNKNOWN_ERROR;
     let recoverySteps: string[] = [];
-    let severity: 'low' | 'medium' | 'high' = 'medium';
+    let severity: 'low' | 'medium' = 'medium';
 
     if (error.includes("rejected") || error.includes("cancelled")) {
-      type = WalletErrorType.USER_REJECTION;
       recoverySteps = [
         "Check your wallet extension popup",
         "Click 'Approve' or 'Connect' in your wallet",
@@ -41,7 +39,6 @@ export function WalletErrorDisplay({
       ];
       severity = 'low';
     } else if (error.includes("not found") || error.includes("not installed")) {
-      type = WalletErrorType.WALLET_NOT_FOUND;
       recoverySteps = [
         "Install Freighter, Albedo, or xBull wallet",
         "Enable the wallet extension in your browser",
@@ -49,7 +46,6 @@ export function WalletErrorDisplay({
       ];
       severity = 'medium';
     } else if (error.includes("locked")) {
-      type = WalletErrorType.WALLET_LOCKED;
       recoverySteps = [
         "Open your wallet extension",
         "Enter your password to unlock",
@@ -57,7 +53,6 @@ export function WalletErrorDisplay({
       ];
       severity = 'medium';
     } else if (error.includes("connection")) {
-      type = WalletErrorType.CONNECTION_FAILED;
       recoverySteps = [
         "Check your internet connection",
         "Ensure wallet extension is enabled",
@@ -72,10 +67,10 @@ export function WalletErrorDisplay({
       ];
     }
 
-    return { type, recoverySteps, severity };
+    return { recoverySteps, severity };
   };
 
-  const { type, recoverySteps, severity } = getErrorInfo();
+  const { recoverySteps, severity } = getErrorInfo();
 
   const getSeverityColors = () => {
     switch (severity) {
@@ -86,14 +81,7 @@ export function WalletErrorDisplay({
           text: 'text-amber-400',
           icon: 'text-amber-400'
         };
-      case 'high':
-        return {
-          bg: 'bg-red-500/10',
-          border: 'border-red-500/30',
-          text: 'text-red-400',
-          icon: 'text-red-400'
-        };
-      default:
+      default: // 'medium'
         return {
           bg: 'bg-orange-500/10',
           border: 'border-orange-500/30',

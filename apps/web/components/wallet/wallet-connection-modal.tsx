@@ -212,7 +212,7 @@ export function WalletConnectionModal({
           {/* Help Section */}
           <div className="pt-4 border-t border-zinc-700/50">
             <p className="text-xs text-zinc-500 mb-2">
-              Don't have a wallet yet?
+              Don&apos;t have a wallet yet?
             </p>
             <div className="flex flex-wrap gap-2">
               {SUPPORTED_WALLETS.map((wallet) => (

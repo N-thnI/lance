@@ -5,7 +5,7 @@
  * mobile responsiveness, and accessibility compliance
  */
 
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { ConnectWalletButton } from '../connect-wallet-button';
 import { WalletErrorDisplay } from '../wallet-error-display';
