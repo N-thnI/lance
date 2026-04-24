@@ -33,9 +33,7 @@ use governor::{
     state::{InMemoryState, NotKeyed},
     Quota, RateLimiter,
 };
-use governor::{
-    state::keyed::DefaultKeyedStateStore, DefaultKeyedRateLimiter,
-};
+use governor::{state::keyed::DefaultKeyedStateStore, DefaultKeyedRateLimiter};
 use serde_json::json;
 use tower::{Layer, Service};
 
@@ -123,9 +121,8 @@ where
             match limiter.check_key(&ip) {
                 Ok(_) => inner.call(req).await,
                 Err(not_until) => {
-                    let wait_secs = not_until.wait_time_from(governor::clock::Clock::now(
-                        &DefaultClock::default(),
-                    ));
+                    let wait_secs = not_until
+                        .wait_time_from(governor::clock::Clock::now(&DefaultClock::default()));
                     let retry_after = wait_secs.as_secs().max(1);
 
                     let body = Json(json!({
@@ -252,8 +249,14 @@ mod tests {
         let ip_b: IpAddr = "5.6.7.8".parse().unwrap();
 
         assert!(limiter.check_key(&ip_a).is_ok(), "ip_a first request OK");
-        assert!(limiter.check_key(&ip_a).is_err(), "ip_a second request blocked");
-        assert!(limiter.check_key(&ip_b).is_ok(), "ip_b is independent — still OK");
+        assert!(
+            limiter.check_key(&ip_a).is_err(),
+            "ip_a second request blocked"
+        );
+        assert!(
+            limiter.check_key(&ip_b).is_ok(),
+            "ip_b is independent — still OK"
+        );
     }
 
     #[tokio::test]
