@@ -1,4 +1,4 @@
-import { StellarWalletsKit, Networks, WalletNetworkChangeHandler, WalletAccountChangeHandler } from "@creit.tech/stellar-wallets-kit";
+import { StellarWalletsKit, Networks } from "@creit.tech/stellar-wallets-kit";
 import { StrKey, Transaction } from "@stellar/stellar-sdk";
 
 let kit: StellarWalletsKit | null = null;
@@ -113,8 +113,8 @@ export async function signTransaction(xdr: string): Promise<string> {
  * Registers listeners for wallet events.
  */
 export function registerWalletListeners(
-  onAccountChange: WalletAccountChangeHandler,
-  onNetworkChange: WalletNetworkChangeHandler
+  onAccountChange: (address: string | undefined) => void,
+  onNetworkChange: (network: string) => void
 ) {
   const walletsKit = getWalletsKit();
   walletsKit.onAccountChange(onAccountChange);
