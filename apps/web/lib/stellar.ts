@@ -109,14 +109,4 @@ export async function signTransaction(xdr: string): Promise<string> {
   return assertValidTransactionXdr(signedTxXdr);
 }
 
-/**
- * Registers listeners for wallet events.
- */
-export function registerWalletListeners(
-  onAccountChange: (address: string | undefined) => void,
-  onNetworkChange: (network: string) => void
-) {
-  const walletsKit = getWalletsKit();
-  walletsKit.onAccountChange(onAccountChange);
-  walletsKit.onNetworkChange(onNetworkChange);
-}
+

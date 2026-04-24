@@ -2,7 +2,7 @@
 
 import { useEffect, useCallback, useRef } from "react";
 import { useWalletStore } from "@/lib/store/use-wallet-store";
-import { getWalletsKit, registerWalletListeners } from "@/lib/stellar";
+import { getWalletsKit } from "@/lib/stellar";
 import { toast } from "sonner";
 
 export function useWallet() {
@@ -10,7 +10,6 @@ export function useWallet() {
     address, 
     walletId, 
     status, 
-    network: appNetwork,
     setConnection, 
     setStatus, 
     setError, 
@@ -40,13 +39,13 @@ export function useWallet() {
   // Auto-connect logic
   useEffect(() => {
     if (isInitialized.current) return;
-    
+
     const attemptAutoConnect = async () => {
       if (address && walletId) {
         try {
           const kit = getWalletsKit();
           const { address: currentAddress } = await kit.getAddress();
-          
+
           if (currentAddress === address) {
             setStatus("connected");
           } else {
@@ -61,24 +60,7 @@ export function useWallet() {
     };
 
     attemptAutoConnect();
-
-    // Register listeners
-    registerWalletListeners(
-      (newAddress: string | undefined) => {
-        if (newAddress) {
-          setConnection(newAddress, walletId as string);
-          toast.info("Account switched in wallet");
-        } else {
-          disconnect();
-        }
-      },
-      (newNetwork: string) => {
-        if (newNetwork !== appNetwork) {
-          toast.warning(`Network switched to ${newNetwork}. Expected ${appNetwork}.`);
-        }
-      }
-    );
-  }, [address, walletId, appNetwork, setConnection, setStatus, disconnect]);
+  }, [address, walletId, setConnection, setStatus, disconnect]);
 
   return {
     address,
