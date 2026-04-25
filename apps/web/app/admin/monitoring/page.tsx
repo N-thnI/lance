@@ -8,14 +8,11 @@ import {
   Terminal, 
   AlertCircle, 
   CheckCircle2, 
-  ChevronRight,
   TrendingUp,
   Cpu,
   Clock
 } from "lucide-react";
 import { 
-  LineChart, 
-  Line, 
   XAxis, 
   YAxis, 
   CartesianGrid, 
@@ -28,7 +25,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useIndexerStatus } from "@/hooks/use-indexer-status";
-import { Separator } from "@/components/ui/separator";
 
 // Mock data for the chart animations since we don't have historical metrics in the API yet
 const generateInitialData = () => {
@@ -45,9 +41,23 @@ const generateInitialData = () => {
 };
 
 export default function MonitoringDashboard() {
-  const { data: status, isLoading, isError, refetch } = useIndexerStatus();
+  const { data: status, isLoading } = useIndexerStatus();
   const [chartData, setChartData] = useState(generateInitialData());
   const [logs, setLogs] = useState<{id: string, msg: string, type: 'info' | 'error' | 'warn'}[]>([]);
+
+  const addLog = (msg: string, type: 'info' | 'error' | 'warn' = 'info') => {
+    setLogs(prev => [{ id: Math.random().toString(36), msg, type }, ...prev].slice(0, 50));
+  };
+
+  const handleRestart = async () => {
+    addLog("Initiating manual indexer restart...", 'info');
+    // In a real app, this would call an admin API
+    setTimeout(() => addLog("Worker process signal sent (SIGTERM -> SIGSTART)", 'info'), 1000);
+  };
+
+  const handleRescan = () => {
+    addLog("Manual ledger re-scan triggered for range [LAST-10, LATEST]", 'warn');
+  };
 
   // Update chart data and logs when status changes
   useEffect(() => {
@@ -66,20 +76,6 @@ export default function MonitoringDashboard() {
       }
     }
   }, [status]);
-
-  const addLog = (msg: string, type: 'info' | 'error' | 'warn' = 'info') => {
-    setLogs(prev => [{ id: Math.random().toString(36), msg, type }, ...prev].slice(0, 50));
-  };
-
-  const handleRestart = async () => {
-    addLog("Initiating manual indexer restart...", 'info');
-    // In a real app, this would call an admin API
-    setTimeout(() => addLog("Worker process signal sent (SIGTERM -> SIGSTART)", 'info'), 1000);
-  };
-
-  const handleRescan = () => {
-    addLog("Manual ledger re-scan triggered for range [LAST-10, LATEST]", 'warn');
-  };
 
   if (isLoading) return (
     <div className="flex h-screen items-center justify-center bg-black text-green-500 font-mono">
@@ -274,7 +270,16 @@ export default function MonitoringDashboard() {
   );
 }
 
-function StatCard({ title, value, subValue, icon, color = "text-white", trend }: any) {
+interface StatCardProps {
+  title: string;
+  value: string;
+  subValue: string;
+  icon: React.ReactNode;
+  color?: string;
+  trend?: "STABLE" | "DEGRADED";
+}
+
+function StatCard({ title, value, subValue, icon, color = "text-white", trend }: StatCardProps) {
   return (
     <Card className="bg-zinc-950 border-zinc-800 rounded-none hover:border-zinc-700 transition-colors">
       <CardContent className="p-4">

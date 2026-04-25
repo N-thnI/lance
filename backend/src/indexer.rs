@@ -207,8 +207,11 @@ async fn process_event_side_effects(
 
             // Update local job if we can find a matching one (e.g. by client address or other meta)
             // This is a simplified placeholder for the actual sync logic.
-            info!("Indexer: Found job creation event for on-chain ID {}", job_id);
-            
+            info!(
+                "Indexer: Found job creation event for on-chain ID {}",
+                job_id
+            );
+
             // Example: update the latest open job for this client that doesn't have an on_chain_id
             // This requires more data from the event payload.
         }
@@ -277,7 +280,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_latest_ledger_recovery() {
         let mock_server = MockServer::start().await;
-        
+
         // First call fails
         Mock::given(method("POST"))
             .respond_with(ResponseTemplate::new(500))
