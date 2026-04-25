@@ -299,24 +299,16 @@ export default function JobDetailsPage() {
                 <p className="mt-2 text-sm leading-6 text-slate-600">
                   Pitch your approach, timing, and why your previous work maps cleanly to this brief.
                 </p>
-                <form onSubmit={handleBid} className="mt-5 space-y-4">
-                  <textarea
-                    value={proposal}
-                    onChange={(event) => setProposal(event.target.value)}
-                    className="min-h-[160px] w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-slate-950 outline-none transition focus:border-amber-400"
-                    placeholder="Tell the client why you're a fit..."
-                    required
-                    id="bid-proposal"
-                  />
-                  <button
-                    type="submit"
-                    disabled={busyAction === "bid"}
-                    className="inline-flex items-center justify-center rounded-full bg-slate-950 px-6 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
-                    id="submit-bid"
-                  >
-                    {busyAction === "bid" ? "Submitting..." : "Submit Bid"}
-                  </button>
-                </form>
+                <div className="mt-5">
+                  <SubmitBidErrorBoundary>
+                    <SubmitBidModal
+                      jobId={id}
+                      onChainJobId={BigInt(workspace.job?.on_chain_job_id ?? 0)}
+                      disabled={busyAction !== null}
+                      onSubmitted={workspace.refresh}
+                    />
+                  </SubmitBidErrorBoundary>
+                </div>
               </section>
 
               <section className="rounded-[2rem] border border-slate-200 bg-white/85 p-6 shadow-[0_20px_60px_-48px_rgba(15,23,42,0.45)]">
