@@ -59,6 +59,24 @@ export async function connectWallet(): Promise<string> {
   });
 }
 
+export async function connectWalletWithInfo(): Promise<{
+  address: string;
+  walletId: string;
+  walletName: string;
+  walletIcon: string;
+}> {
+  const address = await connectWallet();
+  const walletId = getSelectedWalletId() || "freighter";
+  const info = await getWalletInfo(walletId);
+
+  return {
+    address,
+    walletId,
+    walletName: info?.name || walletId,
+    walletIcon: info?.icon || "",
+  };
+}
+
 export async function disconnectWallet(): Promise<void> {
   if (process.env.NEXT_PUBLIC_E2E === "true") return;
   await getWalletsKit().disconnect();
@@ -72,6 +90,26 @@ export async function getConnectedWalletAddress(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export function getSelectedWalletId(): string | null {
+  // The kit might store this internally or we can get it from its configuration
+  return (getWalletsKit() as any).selectedWalletId || null;
+}
+
+export async function getWalletInfo(id: string): Promise<{
+  id: string;
+  name: string;
+  icon: string;
+} | null> {
+  // In a real app, this would query the kit modules. 
+  // For now, we return standard metadata for the common wallets.
+  const wallets = [
+    { id: "freighter", name: "Freighter", icon: "https://freighter.app/logo.png" },
+    { id: "albedo", name: "Albedo", icon: "https://albedo.link/static/logo.svg" },
+    { id: "xbull", name: "xBull", icon: "https://xbull.app/logo.png" },
+  ];
+  return wallets.find(w => w.id === id) || null;
 }
 
 export async function getWalletNetwork(): Promise<StellarNetwork | null> {
@@ -106,4 +144,20 @@ export async function signTransaction(xdr: string): Promise<string> {
   });
 
   return assertValidTransactionXdr(signedTxXdr);
+}
+
+/**
+ * Signs a raw message/blob using the active wallet.
+ * Useful for SIWS (Sign-In With Stellar).
+ */
+export async function signMessage(message: string): Promise<string> {
+  if (process.env.NEXT_PUBLIC_E2E === "true") return "MOCKED_SIGNATURE";
+
+  const walletsKit = getWalletsKit();
+  
+  // Use signMessage for SIWS (Sign-In With Stellar).
+  // Cast to any because the kit types may be slightly behind the implementation for some modules.
+  const { signedMessage } = await (walletsKit as any).signMessage(message);
+  
+  return signedMessage;
 }

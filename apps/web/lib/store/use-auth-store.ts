@@ -13,8 +13,10 @@ interface AuthState {
   isLoggedIn: boolean;
   user: AuthUser | null;
   hydrated: boolean;
+  networkMismatch: boolean;
   setHydrated: (value: boolean) => void;
   setRole: (role: UserRole) => void;
+  setNetworkMismatch: (value: boolean) => void;
   login: (user: AuthUser, role: Exclude<UserRole, "logged-out">) => void;
   logout: () => void;
 }
@@ -24,7 +26,9 @@ export const useAuthStore = create<AuthState>((set) => ({
   isLoggedIn: false,
   user: null,
   hydrated: false,
+  networkMismatch: false,
   setHydrated: (value) => set({ hydrated: value }),
+  setNetworkMismatch: (value) => set({ networkMismatch: value }),
   setRole: (role) =>
     set((state) => ({
       role,
