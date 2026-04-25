@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import JobsPage from "./page";
 import * as jobQueries from "../../hooks/job-queries";
@@ -25,6 +25,7 @@ const mockJobs: jobQueries.BoardJob[] = [
     title: "Senior Soroban Developer",
     description: "Build an escrow system on Stellar.",
     budget_usdc: 5000 * 10_000_000,
+    milestones: 1,
     status: "open",
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
@@ -57,17 +58,17 @@ describe("JobList / JobsPage CI Audit", () => {
       error: null,
     } as unknown as ReturnType<typeof jobQueries.useJobs>);
 
-    render(
+    const { findByText, findByLabelText } = render(
       <QueryClientProvider client={queryClient}>
         <JobsPage />
       </QueryClientProvider>
     );
 
     // Use findBy to account for micro-task timing and CI latency
-    const title = await screen.findByText("Senior Soroban Developer");
+    const title = await findByText("Senior Soroban Developer");
     expect(title).toBeDefined();
     
-    const status = await screen.findByLabelText(/Job status: open/);
+    const status = await findByLabelText(/Job status: open/);
     expect(status).toBeDefined();
   });
 
@@ -78,15 +79,15 @@ describe("JobList / JobsPage CI Audit", () => {
       error: null,
     } as unknown as ReturnType<typeof jobQueries.useJobs>);
 
-    render(
+    const { getByRole, getByText } = render(
       <QueryClientProvider client={queryClient}>
         <JobsPage />
       </QueryClientProvider>
     );
 
-    const loadingState = screen.getByRole("status");
+    const loadingState = getByRole("status");
     expect(loadingState).toBeDefined();
-    expect(screen.getByText(/Loading jobs.../i)).toBeDefined();
+    expect(getByText(/Loading jobs.../i)).toBeDefined();
   });
 
   it("triggers Error Boundary on fetch failure", async () => {
@@ -98,15 +99,15 @@ describe("JobList / JobsPage CI Audit", () => {
     // Suppress console.error for this expected error to keep CI logs clean
     const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
-    render(
+    const { findByText, getByText } = render(
       <QueryClientProvider client={queryClient}>
         <JobsPage />
       </QueryClientProvider>
     );
 
-    const errorHeading = await screen.findByText("Something went wrong");
+    const errorHeading = await findByText("Something went wrong");
     expect(errorHeading).toBeDefined();
-    expect(screen.getByText(/Network Disruption/i)).toBeDefined();
+    expect(getByText(/Network Disruption/i)).toBeDefined();
     
     spy.mockRestore();
   });

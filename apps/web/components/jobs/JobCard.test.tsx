@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render } from "@testing-library/react";
 import { JobCard } from "./JobCard";
 import { BoardJob } from "@/hooks/job-queries";
 
@@ -27,31 +27,31 @@ const mockJob: BoardJob = {
 
 describe("JobCard", () => {
   it("renders job title and description", async () => {
-    render(<JobCard job={mockJob} />);
-    expect(await screen.findByText("Test Job")).toBeDefined();
-    expect(await screen.findByText(/test job description/)).toBeDefined();
+    const { findByText } = render(<JobCard job={mockJob} />);
+    expect(await findByText("Test Job")).toBeDefined();
+    expect(await findByText(/test job description/)).toBeDefined();
   });
 
   it("displays correct status color and aria-label for open jobs", async () => {
-    render(<JobCard job={mockJob} />);
-    const status = await screen.findByLabelText(/Job status: open/i);
+    const { findByLabelText } = render(<JobCard job={mockJob} />);
+    const status = await findByLabelText(/Job status: open/i);
     expect(status.className).toContain("text-emerald-500");
   });
 
   it("renders tags with sufficient contrast", async () => {
-    render(<JobCard job={mockJob} />);
-    const tag = await screen.findByText("react");
+    const { findByText } = render(<JobCard job={mockJob} />);
+    const tag = await findByText("react");
     expect(tag.className).toContain("text-zinc-400"); // Verified improved contrast
   });
 
   it("formats budget correctly", async () => {
-    render(<JobCard job={mockJob} />);
-    expect(await screen.findByText(/1,000/)).toBeDefined();
+    const { findByText } = render(<JobCard job={mockJob} />);
+    expect(await findByText(/1,000/)).toBeDefined();
   });
 
   it("links to the correct job detail page", async () => {
-    render(<JobCard job={mockJob} />);
-    const link = await screen.findByRole("link");
+    const { findByRole } = render(<JobCard job={mockJob} />);
+    const link = await findByRole("link");
     expect(link.getAttribute("href")).toBe("/jobs/1");
   });
 });
